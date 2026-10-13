@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { db } from '../../db';
 import { EvaluationJob, JobStatus } from '../../types';
 import { activeOpenAIProvider } from './providers/openAIProvider';
-import { activeFeatherlessProvider } from './providers/featherlessProvider';
+import { activeFeatherlessProvider, resolveFeatherlessModel } from './providers/featherlessProvider';
 import { activeDeckParser } from './deckParser';
 import { activeScoreCalculator } from './scoreCalculator';
 import { activeTokenUsageService } from './tokenUsageService';
@@ -52,8 +52,12 @@ export class EvaluationQueue {
     options: { provider?: 'openai' | 'featherless'; model?: string } = {}
   ): Promise<EvaluationJob> {
     const config = await db.queryOne('SELECT * FROM admin_config WHERE id = ?', ['global']);
-    const provider = options.provider || config?.ai_judge_provider || 'openai';
-    const model = options.model || config?.ai_judge_model || 'gpt-4o';
+    const provider: 'openai' | 'featherless' =
+      options.provider || (config?.ai_judge_provider as any) || (process.env.AI_PROVIDER as any) || 'featherless';
+    const model =
+      provider === 'featherless'
+        ? resolveFeatherlessModel(options.model || config?.ai_judge_model)
+        : (options.model || config?.ai_judge_model || process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
 
     // Check for existing pending/processing job
     const existingJob = await db.queryOne(`
@@ -184,13 +188,17 @@ export class EvaluationQueue {
       // 5. Select provider
       const provider =
         job.provider === 'featherless' ? activeFeatherlessProvider : activeOpenAIProvider;
+      const modelToUse =
+        job.provider === 'featherless'
+          ? resolveFeatherlessModel(job.model)
+          : (job.model || 'gpt-4o');
 
       const evalResponse = await provider.evaluateDeck({
         submissionId: job.submissionId,
         teamName: submission.team_name,
         submissionName: submission.submission_name,
         deck: parsedDeck,
-        modelOverride: job.model,
+        modelOverride: modelToUse,
       });
 
       // 6. Calculate deterministic final scores

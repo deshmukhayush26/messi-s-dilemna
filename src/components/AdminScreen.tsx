@@ -156,7 +156,7 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
         setAiConfig({
           isAiJudgeEnabled: Boolean(cfgData.isAiJudgeEnabled),
           provider: cfgData.provider || 'openai',
-          model: cfgData.model || (cfgData.provider === 'featherless' ? 'meta-llama/Llama-3.2-11B-Vision-Instruct' : 'gpt-4o'),
+          model: cfgData.model || (cfgData.provider === 'featherless' ? 'meta-llama/Meta-Llama-3.1-8B-Instruct' : 'gpt-4o'),
           rubricVersion: cfgData.rubricVersion || 'v1',
           maxConcurrency: cfgData.maxConcurrency || 2,
           maxRetries: cfgData.maxRetries || 3,
@@ -207,7 +207,7 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
               model:
                 cfgData.model ||
                 (cfgData.provider === 'featherless'
-                  ? 'meta-llama/Llama-3.2-11B-Vision-Instruct'
+                  ? 'meta-llama/Meta-Llama-3.1-8B-Instruct'
                   : 'gpt-4o'),
               rubricVersion: cfgData.rubricVersion || 'v1',
               maxConcurrency: cfgData.maxConcurrency || 2,
@@ -1039,7 +1039,7 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
                       provider: newProvider,
                       model:
                         newProvider === 'featherless'
-                          ? 'meta-llama/Llama-3.2-11B-Vision-Instruct'
+                          ? 'meta-llama/Meta-Llama-3.1-8B-Instruct'
                           : 'gpt-4o',
                     }));
                   }}
@@ -1589,7 +1589,14 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: 4,
-                                  background: hasOverride ? '#fef08a' : isMock ? '#fed7aa' : '#bbf7d0',
+                                  background:
+                                    evalRecord?.evaluationStatus === 'failed'
+                                      ? '#fee2e2'
+                                      : hasOverride
+                                      ? '#fef08a'
+                                      : isMock
+                                      ? '#fed7aa'
+                                      : '#bbf7d0',
                                   padding: '3px 10px',
                                   borderRadius: 9999,
                                   fontWeight: 800,
@@ -1597,9 +1604,28 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
                                   width: 'fit-content',
                                 }}
                               >
-                                {evalRecord?.overallScore ?? 50}
-                                <span style={{ fontSize: 10, fontWeight: 700, color: hasOverride ? '#854d0e' : isMock ? '#9a3412' : '#166534' }}>
-                                  {hasOverride ? '[Override]' : isMock ? '[Mock]' : '[AI]'}
+                                {evalRecord?.evaluationStatus === 'failed' ? 'Failed' : (evalRecord?.overallScore ?? 50)}
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    color:
+                                      evalRecord?.evaluationStatus === 'failed'
+                                        ? '#991b1b'
+                                        : hasOverride
+                                        ? '#854d0e'
+                                        : isMock
+                                        ? '#9a3412'
+                                        : '#166534',
+                                  }}
+                                >
+                                  {evalRecord?.evaluationStatus === 'failed'
+                                    ? '[Failed]'
+                                    : hasOverride
+                                    ? '[Override]'
+                                    : isMock
+                                    ? '[Mock]'
+                                    : '[AI]'}
                                 </span>
                               </div>
                               {needsReview && (

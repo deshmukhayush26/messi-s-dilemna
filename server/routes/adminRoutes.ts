@@ -5,6 +5,7 @@ import { activeAuthService } from '../services/authService';
 import { activeEvaluationService } from '../services/evaluationService';
 import { activeTimerService } from '../services/timerService';
 import { activeStorageService } from '../services/storageService';
+import { resolveFeatherlessModel, DEFAULT_FEATHERLESS_MODEL } from '../services/aiJudge/providers/featherlessProvider';
 
 export const adminRouter = Router();
 
@@ -302,10 +303,18 @@ adminRouter.get('/ai-judge/config', requireOrganizer, async (_req: Request, res:
     const hasOpenAiKey = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'placeholder');
     const hasFeatherlessKey = Boolean(process.env.FEATHERLESS_API_KEY && process.env.FEATHERLESS_API_KEY !== 'placeholder');
 
+    const effectiveFeatherlessModel = resolveFeatherlessModel(config?.ai_judge_model);
+    const provider = config?.ai_judge_provider || (process.env.AI_PROVIDER as any) || 'featherless';
+    const effectiveModel =
+      provider === 'featherless'
+        ? effectiveFeatherlessModel
+        : (config?.ai_judge_model || process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
+
     return res.status(200).json({
       isEnabled: process.env.AI_JUDGE_ENABLED === 'true' || Boolean(config?.is_ai_judge_enabled),
-      provider: config?.ai_judge_provider || (process.env.AI_PROVIDER as any) || 'openai',
-      model: config?.ai_judge_model || process.env.OPENAI_JUDGE_MODEL || process.env.FEATHERLESS_JUDGE_MODEL || 'gpt-4o',
+      provider,
+      model: effectiveModel,
+      effectiveModel,
       rubricVersion: config?.ai_judge_rubric_version || 'v1',
       maxConcurrency: config?.ai_judge_max_concurrency || 2,
       maxRetries: config?.ai_judge_max_retries || 3,
@@ -315,7 +324,7 @@ adminRouter.get('/ai-judge/config', requireOrganizer, async (_req: Request, res:
       hasOpenAiKey,
       hasFeatherlessKey,
       openAiModelConfigured: process.env.OPENAI_JUDGE_MODEL || 'gpt-4o',
-      featherlessModelConfigured: process.env.FEATHERLESS_JUDGE_MODEL || 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+      featherlessModelConfigured: effectiveFeatherlessModel,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Failed to fetch AI judge config' });
@@ -422,7 +431,7 @@ adminRouter.post('/ai-judge/test-connection', requireOrganizer, async (req: Requ
       return res.status(200).json({
         success: true,
         provider: 'featherless',
-        model: process.env.FEATHERLESS_JUDGE_MODEL || 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+        model: resolveFeatherlessModel(req.body.model),
         message: 'Featherless AI configuration validated.',
       });
     }

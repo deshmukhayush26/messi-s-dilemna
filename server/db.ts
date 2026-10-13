@@ -393,18 +393,23 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
         ) ON CONFLICT (id) DO NOTHING
       `, [
         'global', 500000, 1, 'all', 0,
-        'featherless', 'meta-llama/Llama-3.2-11B-Vision-Instruct', 'v1', 2,
+        'featherless', 'meta-llama/Meta-Llama-3.1-8B-Instruct', 'v1', 2,
         3, 50.0, 0.0, 'immediate',
         nowIso
       ]);
     } else {
-      // Update existing default to Featherless
+      // Update existing default to Featherless with Meta-Llama-3.1-8B-Instruct
       await targetDb.execute(`
         UPDATE admin_config
         SET ai_judge_provider = 'featherless',
-            ai_judge_model = 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+            ai_judge_model = 'meta-llama/Meta-Llama-3.1-8B-Instruct',
             is_ai_judge_enabled = 1
-        WHERE id = 'global' AND (ai_judge_provider = 'openai' OR is_ai_judge_enabled = 0)
+        WHERE id = 'global' AND (
+          ai_judge_provider = 'openai'
+          OR is_ai_judge_enabled = 0
+          OR ai_judge_model IS NULL
+          OR ai_judge_model LIKE '%Llama-3.2-11B-Vision-Instruct%'
+        )
       `);
     }
 
@@ -617,7 +622,7 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       'global', 500000, 1, 'all', 0,
-      'featherless', 'meta-llama/Llama-3.2-11B-Vision-Instruct', 'v1', 2,
+      'featherless', 'meta-llama/Meta-Llama-3.1-8B-Instruct', 'v1', 2,
       3, 50.0, 0.0, 'immediate',
       new Date().toISOString()
     ]);
@@ -625,9 +630,14 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
     await targetDb.execute(`
       UPDATE admin_config
       SET ai_judge_provider = 'featherless',
-          ai_judge_model = 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+          ai_judge_model = 'meta-llama/Meta-Llama-3.1-8B-Instruct',
           is_ai_judge_enabled = 1
-      WHERE id = 'global' AND (ai_judge_provider = 'openai' OR is_ai_judge_enabled = 0)
+      WHERE id = 'global' AND (
+        ai_judge_provider = 'openai'
+        OR is_ai_judge_enabled = 0
+        OR ai_judge_model IS NULL
+        OR ai_judge_model LIKE '%Llama-3.2-11B-Vision-Instruct%'
+      )
     `);
   }
 
@@ -742,14 +752,14 @@ async function seedInitialDemoSubmissions(targetDb: DatabaseAdapter = db) {
         created_at
       )
       VALUES (
-        ?, ?, 'featherless-Llama-3.2-11B-Vision-Instruct-v1', 'completed',
+        ?, ?, 'featherless-Meta-Llama-3.1-8B-Instruct-v1', 'completed',
         ?, ?, ?,
         ?, ?, ?,
         'Strong strategic assessment addressing the core commercial transition beyond the Messi era with structured financial milestones.',
         '["Clear distinction between short-term star power and lasting fan equity","Realistic Capex schedule for academy infrastructure"]',
         '["Could expand on MLS roster rule constraints under DP model"]',
         '["Slide 2 market size data","Slide 4 sensitivity model"]',
-        0, 'featherless', 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+        0, 'featherless', 'meta-llama/Meta-Llama-3.1-8B-Instruct',
         1850, 420, 2270, 0.0045,
         ?
       )

@@ -385,10 +385,16 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
                   <p><strong>Team:</strong> {submittedDeck.teamName}</p>
                   <p><strong>Submitted by:</strong> {submittedDeck.userName} ({submittedDeck.userRollNumber})</p>
                   <p><strong>Slide Count:</strong> {submittedDeck.slideCount} slides (meets 5–6 slide requirement)</p>
-                  <div style={{ marginTop: 12, padding: '10px 14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 10, color: '#c2410c' }}>
-                    <strong>Evaluation Mode:</strong> {submittedDeck.evaluation?.isMock ? 'Mock scoring (AI judge inactive)' : 'AI Judge Evaluation Active'}<br />
-                    <strong>Overall Score:</strong> {submittedDeck.evaluation?.overallScore ?? 50} / 100<br />
-                    <strong>Category Breakdown:</strong> Problem Structuring (20%), Analytical Rigor (25%), Strategic Insight (25%), Feasibility & Impact (20%), Communication (10%)
+                  <div style={{ marginTop: 12, padding: '10px 14px', background: submittedDeck.evaluation?.evaluationStatus === 'failed' ? '#fef2f2' : '#fff7ed', border: `1px solid ${submittedDeck.evaluation?.evaluationStatus === 'failed' ? '#fca5a5' : '#fdba74'}`, borderRadius: 10, color: submittedDeck.evaluation?.evaluationStatus === 'failed' ? '#991b1b' : '#c2410c' }}>
+                    <strong>Evaluation Mode:</strong> {submittedDeck.evaluation?.evaluationStatus === 'failed' ? <span style={{ fontWeight: 800 }}>AI Evaluation Failed (Pending Organizer Review)</span> : (submittedDeck.evaluation?.isMock ? 'Mock scoring (AI judge inactive)' : 'AI Judge Evaluation Active')}<br />
+                    {submittedDeck.evaluation?.evaluationStatus === 'failed' ? (
+                      <div><strong>Status:</strong> <span style={{ fontWeight: 800 }}>Failed (Excluded from Leaderboard)</span></div>
+                    ) : (
+                      <>
+                        <strong>Overall Score:</strong> {submittedDeck.evaluation?.overallScore ?? 50} / 100<br />
+                        <strong>Category Breakdown:</strong> Problem Structuring (20%), Analytical Rigor (25%), Strategic Insight (25%), Feasibility & Impact (20%), Communication (10%)
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -695,15 +701,25 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700 }}>OVERALL SCORE</div>
-                    <div style={{ fontSize: 32, fontWeight: 900, color: '#0f172a' }}>
-                      {feedbackData.overallScore} <span style={{ fontSize: 16, color: '#64748b' }}>/ 100</span>
+                    <div style={{ fontSize: 12, color: feedbackData.evaluationStatus === 'failed' ? '#991b1b' : '#64748b', fontWeight: 700 }}>
+                      {feedbackData.evaluationStatus === 'failed' ? 'EVALUATION STATUS' : 'OVERALL SCORE'}
+                    </div>
+                    <div style={{ fontSize: feedbackData.evaluationStatus === 'failed' ? 24 : 32, fontWeight: 900, color: feedbackData.evaluationStatus === 'failed' ? '#dc2626' : '#0f172a' }}>
+                      {feedbackData.evaluationStatus === 'failed' ? (
+                        'Evaluation Failed'
+                      ) : (
+                        <>
+                          {feedbackData.overallScore} <span style={{ fontSize: 16, color: '#64748b' }}>/ 100</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{feedbackData.teamName}</div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>
-                      Evaluation Mode: {feedbackData.isMock ? 'Mock scoring (baseline 50)' : 'AI Judge Evaluated'}
+                    <div style={{ fontSize: 12, color: feedbackData.evaluationStatus === 'failed' ? '#dc2626' : '#64748b', fontWeight: feedbackData.evaluationStatus === 'failed' ? 700 : 400 }}>
+                      {feedbackData.evaluationStatus === 'failed'
+                        ? 'Evaluation execution failed. Excluded from public leaderboard.'
+                        : `Evaluation Mode: ${feedbackData.isMock ? 'Mock scoring (baseline 50)' : 'AI Judge Evaluated'}`}
                     </div>
                   </div>
                 </div>

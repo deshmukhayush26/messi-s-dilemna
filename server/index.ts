@@ -12,7 +12,7 @@ import { adminRouter } from './routes/adminRoutes';
 import { timerRouter } from './routes/timerRoutes';
 import { activeTimerService } from './services/timerService';
 import { activeEvaluationService } from './services/evaluationService';
-import { activeFeatherlessProvider } from './services/aiJudge/providers/featherlessProvider';
+import { activeFeatherlessProvider, resolveFeatherlessModel } from './services/aiJudge/providers/featherlessProvider';
 import { activeOpenAIProvider } from './services/aiJudge/providers/openAIProvider';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -111,13 +111,18 @@ const handleHealth = async (_req: express.Request, res: express.Response) => {
     const providerName = config?.ai_judge_provider || process.env.AI_PROVIDER || 'featherless';
     const provider = providerName === 'featherless' ? activeFeatherlessProvider : activeOpenAIProvider;
     const configValidation = provider.validateConfig();
+    const effectiveModel =
+      providerName === 'featherless'
+        ? resolveFeatherlessModel(config?.ai_judge_model)
+        : (process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
 
     res.json({
       status: dbHealth.status === 'connected' ? 'ok' : 'degraded',
       mode: 'CCG × OpenAI Case Competition',
       aiJudgeEnabled: isAiEnabled,
       aiProvider: providerName,
-      aiModel: config?.ai_judge_model || (providerName === 'featherless' ? process.env.FEATHERLESS_JUDGE_MODEL || 'meta-llama/Llama-3.2-11B-Vision-Instruct' : process.env.OPENAI_JUDGE_MODEL || 'gpt-4o'),
+      aiModel: effectiveModel,
+      effectiveModel,
       aiConfigured: configValidation.valid,
       ...(configValidation.error ? { aiConfigError: configValidation.error } : {}),
       timerStatus: timer.status,
@@ -155,9 +160,16 @@ async function startServer() {
   // Initialize DB schema, tables & seeds
   await initDb();
 
+  const config = await db.queryOne('SELECT ai_judge_provider, ai_judge_model FROM admin_config WHERE id = ?', ['global']);
+  const startupProvider = config?.ai_judge_provider || process.env.AI_PROVIDER || 'featherless';
+  const startupModel = startupProvider === 'featherless'
+    ? resolveFeatherlessModel(config?.ai_judge_model)
+    : (process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
+
   server = app.listen(PORT, () => {
     console.log(`🚀 CCG Case Evaluation API Server listening on port ${PORT}`);
     console.log(`ℹ️ Mode: Password Auth & Featherless AI Evaluation (Database: ${db.isPostgres ? 'PostgreSQL' : 'SQLite'})`);
+    console.log(`[Diagnostic] AI Judge Provider: ${startupProvider}, Effective Model: ${startupModel}`);
   });
 
   const gracefulShutdown = (signal: string) => {

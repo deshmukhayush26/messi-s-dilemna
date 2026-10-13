@@ -14,7 +14,7 @@ import { activeTimerService } from '../server/services/timerService';
 import { activeFileValidationService } from '../server/services/fileValidationService';
 import { DeckParser } from '../server/services/aiJudge/deckParser';
 import { ScoreCalculator } from '../server/services/aiJudge/scoreCalculator';
-import { FeatherlessProvider } from '../server/services/aiJudge/providers/featherlessProvider';
+import { FeatherlessProvider, resolveFeatherlessModel, DEFAULT_FEATHERLESS_MODEL } from '../server/services/aiJudge/providers/featherlessProvider';
 import { activeEvaluationAuditService } from '../server/services/aiJudge/evaluationAuditService';
 import { PDFDocument } from 'pdf-lib';
 import JSZip from 'jszip';
@@ -299,7 +299,7 @@ async function runFullTestSuite() {
   const customFeatherless = new FeatherlessProvider(
     'test_key',
     'https://api.featherless.ai/v1',
-    'meta-llama/Llama-3.2-11B-Vision-Instruct',
+    'meta-llama/Meta-Llama-3.1-8B-Instruct',
     mockFeatherlessClient as any
   );
 
@@ -332,7 +332,7 @@ async function runFullTestSuite() {
         communication_score = 90,
         is_mock = 0,
         provider = 'featherless',
-        model = 'meta-llama/Llama-3.2-11B-Vision-Instruct'
+        model = 'meta-llama/Meta-Llama-3.1-8B-Instruct'
     WHERE submission_id = ?
   `, [subId]);
 
@@ -567,6 +567,167 @@ async function runFullTestSuite() {
     assert(resLogin.status === 200 && loginJson.token && loginJson.user?.role === 'participant', 'Express responds 200 to POST /api/auth/login');
   } finally {
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  }
+
+  // ---------------------------------------------------------------------------
+  // SECTION 9: Featherless Model Configuration & Outgoing Request Diagnostics
+  // ---------------------------------------------------------------------------
+  console.log('\n👉 [9] Featherless Model Configuration & Outgoing Request Diagnostics');
+
+  // Test 9.1: resolveFeatherlessModel precedence hierarchy
+  const origFModel = process.env.FEATHERLESS_MODEL;
+  const origFJudgeModel = process.env.FEATHERLESS_JUDGE_MODEL;
+
+  try {
+    // 9.1.1: Default fallback when nothing is set
+    delete process.env.FEATHERLESS_MODEL;
+    delete process.env.FEATHERLESS_JUDGE_MODEL;
+    assert(
+      resolveFeatherlessModel() === 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+      'resolveFeatherlessModel defaults to meta-llama/Meta-Llama-3.1-8B-Instruct when env and DB are unset'
+    );
+
+    // 9.1.2: Stale retired 404 model in DB/dashboard is ignored and safely falls back
+    assert(
+      resolveFeatherlessModel('meta-llama/Llama-3.2-11B-Vision-Instruct') === 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+      'resolveFeatherlessModel ignores stale Llama-3.2-11B-Vision-Instruct from DB and falls back to default'
+    );
+
+    // 9.1.3: Valid custom model from DB/dashboard is respected when env var is not set
+    assert(
+      resolveFeatherlessModel('Qwen/Qwen2-VL-7B-Instruct') === 'Qwen/Qwen2-VL-7B-Instruct',
+      'resolveFeatherlessModel respects valid custom model when no env var is configured'
+    );
+
+    // 9.1.4: FEATHERLESS_MODEL environment variable strictly overrides stale DB model
+    process.env.FEATHERLESS_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct';
+    assert(
+      resolveFeatherlessModel('meta-llama/Llama-3.2-11B-Vision-Instruct') === 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+      'FEATHERLESS_MODEL environment variable overrides stale database setting'
+    );
+
+    // 9.1.5: Custom FEATHERLESS_MODEL environment variable overrides custom DB model
+    process.env.FEATHERLESS_MODEL = 'mistralai/Mistral-7B-Instruct-v0.3';
+    assert(
+      resolveFeatherlessModel('Qwen/Qwen2-VL-7B-Instruct') === 'mistralai/Mistral-7B-Instruct-v0.3',
+      'Explicit FEATHERLESS_MODEL environment variable overrides any database or dashboard configuration'
+    );
+
+    // 9.1.6: Legacy FEATHERLESS_JUDGE_MODEL env fallback works if FEATHERLESS_MODEL is unset
+    delete process.env.FEATHERLESS_MODEL;
+    process.env.FEATHERLESS_JUDGE_MODEL = 'meta-llama/Meta-Llama-3.1-70B-Instruct';
+    assert(
+      resolveFeatherlessModel('meta-llama/Llama-3.2-11B-Vision-Instruct') === 'meta-llama/Meta-Llama-3.1-70B-Instruct',
+      'Legacy FEATHERLESS_JUDGE_MODEL environment variable is recognized as fallback'
+    );
+  } finally {
+    if (origFModel !== undefined) process.env.FEATHERLESS_MODEL = origFModel;
+    else delete process.env.FEATHERLESS_MODEL;
+    if (origFJudgeModel !== undefined) process.env.FEATHERLESS_JUDGE_MODEL = origFJudgeModel;
+    else delete process.env.FEATHERLESS_JUDGE_MODEL;
+  }
+
+  // Test 9.2: Outgoing Featherless API Request uses configured model ID and appropriate payload
+  let interceptedCreateArgs: any = null;
+  const mockInterceptionClient = {
+    chat: {
+      completions: {
+        create: async (args: any) => {
+          interceptedCreateArgs = args;
+          return {
+            id: 'chatcmpl_intercept_test',
+            model: args.model,
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    executive_summary: 'Test summary',
+                    recommendation: 'Test recommendation',
+                    strengths: ['Clear vision'],
+                    weaknesses: ['Minor risk'],
+                    evidence: ['Slide 1'],
+                    criterion_scores: {
+                      problem_structuring: { score: 4, reasoning: 'Strong' },
+                      analytical_rigor: { score: 4, reasoning: 'Rigor' },
+                      strategic_insight: { score: 4, reasoning: 'Insight' },
+                      feasibility_impact: { score: 4, reasoning: 'Feasible' },
+                      communication: { score: 4, reasoning: 'Clear' },
+                    },
+                    assumptions_and_risks: 'Low',
+                    actionable_feedback: ['Focus on execution'],
+                    confidence: 0.9,
+                    needs_human_review: false,
+                    review_flags: [],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+          };
+        },
+      },
+    },
+  };
+
+  const testProvider = new FeatherlessProvider(
+    'test_key',
+    'https://api.featherless.ai/v1',
+    'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    mockInterceptionClient as any
+  );
+
+  // Evaluate with default text model
+  await testProvider.evaluateDeck({
+    deck: { slides: [{ slideNumber: 1, text: 'Sample text' }] },
+    teamName: 'Diagnostic Team',
+    submissionName: 'Test Deck',
+  });
+
+  assert(
+    interceptedCreateArgs?.model === 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    'Outgoing Featherless request uses configured Meta-Llama-3.1-8B-Instruct model ID'
+  );
+  assert(
+    typeof interceptedCreateArgs?.messages[1].content === 'string',
+    'Text-only Meta-Llama-3.1-8B-Instruct sends text string content without image_url parts'
+  );
+
+  // Evaluate with vision model
+  await testProvider.evaluateDeck({
+    modelOverride: 'Qwen/Qwen2-VL-7B-Instruct',
+    deck: { slides: [{ slideNumber: 1, text: 'Slide', imageDataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==' }] },
+    teamName: 'Vision Team',
+    submissionName: 'Vision Deck',
+  });
+
+  assert(
+    interceptedCreateArgs?.model === 'Qwen/Qwen2-VL-7B-Instruct',
+    'Outgoing Featherless request switches to overridden vision model ID'
+  );
+  assert(
+    Array.isArray(interceptedCreateArgs?.messages[1].content) &&
+    interceptedCreateArgs?.messages[1].content.some((p: any) => p.type === 'image_url'),
+    'Vision model outgoing request attaches multimodal image_url parts'
+  );
+
+  // Test 9.3: Health endpoint reports safe effectiveModel diagnostic
+  const diagServer = http.createServer(app);
+  await new Promise<void>((resolve) => diagServer.listen(0, resolve));
+  const diagPort = (diagServer.address() as any).port;
+  try {
+    const healthRes = await fetch(`http://127.0.0.1:${diagPort}/api/health`);
+    const healthJson = await healthRes.json();
+    assert(healthRes.status === 200, 'GET /api/health returns 200');
+    assert(
+      healthJson.effectiveModel === 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+      `Health endpoint reports safe effectiveModel diagnostic (${healthJson.effectiveModel})`
+    );
+    assert(
+      !healthJson.apiKey && !healthJson.featherlessApiKey,
+      'Health endpoint diagnostic does not expose API keys or secrets'
+    );
+  } finally {
+    await new Promise<void>((resolve) => diagServer.close(() => resolve()));
   }
 
   // ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ export const ApiContractDocs: React.FC = () => {
           </div>
 
           <p style={{ fontSize: 15, color: '#475569', lineHeight: 1.6 }}>
-            This platform runs a decoupled architecture with a React single-page frontend hosted on Vercel, an Express API backend with PostgreSQL persistence on Render, and Featherless AI vision judging powered by <code>meta-llama/Llama-3.2-11B-Vision-Instruct</code>.
+            This platform runs a decoupled architecture with a React single-page frontend hosted on Vercel, an Express API backend with PostgreSQL persistence on Render, and Featherless AI judging powered by <code>meta-llama/Meta-Llama-3.1-8B-Instruct</code>.
           </p>
         </div>
 
@@ -52,7 +52,7 @@ export const ApiContractDocs: React.FC = () => {
     "id": "eval_67890",
     "submissionId": "sub_12345",
     "evaluationStatus": "completed",
-    "evaluationVersion": "featherless-meta-llama/Llama-3.2-11B-Vision-Instruct-v1",
+    "evaluationVersion": "featherless-meta-llama/Meta-Llama-3.1-8B-Instruct-v1",
     "overallScore": 86,
     "scores": {
       "problemStructuring": 85,
@@ -62,7 +62,7 @@ export const ApiContractDocs: React.FC = () => {
       "communication": 87
     },
     "provider": "featherless",
-    "model": "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
     "aiRationale": "Comprehensive strategic solution addressing the post-Messi commercial transition...",
     "isMock": false
   }

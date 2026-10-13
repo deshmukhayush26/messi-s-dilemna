@@ -42,7 +42,7 @@ services:
       - key: AI_PROVIDER
         value: featherless
       - key: FEATHERLESS_MODEL
-        value: "meta-llama/Llama-3.2-11B-Vision-Instruct"
+        value: "meta-llama/Meta-Llama-3.1-8B-Instruct"
       - key: FEATHERLESS_API_KEY
         sync: false
       - key: AI_JUDGE_BUDGET_USD

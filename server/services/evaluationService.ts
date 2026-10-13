@@ -3,7 +3,7 @@ import { Evaluation, TokenUsageStats } from '../types';
 import { db } from '../db';
 import crypto from 'node:crypto';
 import { activeOpenAIProvider } from './aiJudge/providers/openAIProvider';
-import { activeFeatherlessProvider } from './aiJudge/providers/featherlessProvider';
+import { activeFeatherlessProvider, resolveFeatherlessModel, DEFAULT_FEATHERLESS_MODEL } from './aiJudge/providers/featherlessProvider';
 import { activeDeckParser } from './aiJudge/deckParser';
 import { activeScoreCalculator } from './aiJudge/scoreCalculator';
 import { activeTokenUsageService } from './aiJudge/tokenUsageService';
@@ -89,11 +89,12 @@ export class ProductionEvaluationService implements IEvaluationService {
       'featherless';
 
     const provider = providerName === 'openai' ? activeOpenAIProvider : activeFeatherlessProvider;
-    const defaultModel =
+    const selectedModel =
       providerName === 'featherless'
-        ? (process.env.FEATHERLESS_JUDGE_MODEL || 'meta-llama/Llama-3.2-11B-Vision-Instruct')
-        : (process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
-    const selectedModel = options.model || defaultModel;
+        ? resolveFeatherlessModel(options.model || config?.ai_judge_model)
+        : (options.model || process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
+
+    console.log(`[AI Judge] Evaluating submission '${submissionId}' using provider='${providerName}', model='${selectedModel}'`);
 
     // 1. Validate Provider Configuration
     const configCheck = provider.validateConfig();
@@ -464,7 +465,7 @@ export class ProductionEvaluationService implements IEvaluationService {
       evidence: Array.isArray(evidence) ? JSON.stringify(evidence) : row.evidence,
       isMock: Boolean(row.is_mock),
       provider: row.provider || 'featherless',
-      model: row.model || 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+      model: row.model || DEFAULT_FEATHERLESS_MODEL,
       inputTokens: row.input_tokens || 0,
       outputTokens: row.output_tokens || 0,
       cachedTokens: row.cached_tokens || 0,

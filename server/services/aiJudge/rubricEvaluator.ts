@@ -208,8 +208,8 @@ You MUST respond with valid JSON matching this exact schema:
     return `## SUBMISSION TO EVALUATE:
 Team Name: ${teamName}
 Submission Name: ${submissionName}
-Total Slides: ${deck.slideCount}
-File Format: ${deck.fileType.toUpperCase()}
+Total Slides: ${deck.slideCount ?? deck.slides?.length ?? 0}
+File Format: ${(deck.fileType || 'PDF').toUpperCase()}
 
 ${slideSections.join('\n---\n')}
 `;

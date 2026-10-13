@@ -21,6 +21,11 @@ export const MODEL_PRICING_CATALOG: Record<string, ModelPricing> = {
     outputPerMillion: 0.60,
   },
   // Featherless AI Models
+  'meta-llama/Meta-Llama-3.1-8B-Instruct': {
+    inputPerMillion: 0.20,
+    cachedInputPerMillion: 0.20,
+    outputPerMillion: 0.20,
+  },
   'meta-llama/Llama-3.2-11B-Vision-Instruct': {
     inputPerMillion: 0.20,
     cachedInputPerMillion: 0.20,

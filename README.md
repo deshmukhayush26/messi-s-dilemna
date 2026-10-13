@@ -24,7 +24,7 @@ The application is architected into a resilient modern web stack:
 │  - Participant Password Auth (scrypt HMAC)             │
 │  - Dedicated Organizer Passkey Portal                  │
 │  - Featherless AI Judge Pipeline                       │
-│    (meta-llama/Llama-3.2-11B-Vision-Instruct)          │
+│    (meta-llama/Meta-Llama-3.1-8B-Instruct)             │
 └───────┬──────────────────────────────┬─────────────────┘
         │ PostgreSQL Connection        │ S3 / R2 API
         ▼                              ▼
@@ -38,8 +38,8 @@ The application is architected into a resilient modern web stack:
 
 1. **Frontend (Vercel)**: Fast, globally distributed static Vite SPA with canonical client routing (`/`, `/submission`, `/leaderboard`, `/admin`), live countdown sync, centralized API client, and presentation deck uploads. Requests to `/api/*` are transparently proxied to Render.
 2. **Backend API (Render)**: Node.js/Express service orchestrating timer states, slide inspection, password-based participant accounts, organizer access control, leaderboard scoring, and Featherless AI evaluations.
-3. **Persistent Database (Managed PostgreSQL)**: Relational database with versioned migrations (`migrations/001_initial_schema.sql`, `migrations/002_participant_passwords.sql`) tracking event countdown states, audit logs, submissions, and evaluations.
-4. **Featherless AI Judging Pipeline**: Real LLM evaluation using `meta-llama/Llama-3.2-11B-Vision-Instruct` to assess submissions against the 5-criterion case rubric. Placeholder score-50 logic is completely removed.
+3. **Persistent Database (Managed PostgreSQL)**: Relational database with versioned migrations (`migrations/001_initial_schema.sql`, `migrations/002_participant_passwords.sql`, `migrations/003_featherless_default_model.sql`) tracking event countdown states, audit logs, submissions, and evaluations.
+4. **Featherless AI Judging Pipeline**: Real LLM evaluation using `meta-llama/Meta-Llama-3.1-8B-Instruct` (with `FEATHERLESS_MODEL` env override support) to assess submissions against the 5-criterion case rubric. Placeholder score-50 logic is completely removed.
 
 ---
 
@@ -73,7 +73,7 @@ The platform exposes the following clean production routes:
 
 ### 3. Production Featherless AI Case Judge
 - **Provider**: Featherless AI (`https://api.featherless.ai/v1`).
-- **Model**: `meta-llama/Llama-3.2-11B-Vision-Instruct` (multimodal vision support for slide decks).
+- **Model**: `meta-llama/Meta-Llama-3.1-8B-Instruct` (configurable via `FEATHERLESS_MODEL` env var).
 - **Rubric Criteria**:
   1. *Problem Structuring & Understanding* (20% weight)
   2. *Analytical Rigor & Evidence* (25% weight)

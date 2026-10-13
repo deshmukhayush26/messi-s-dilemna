@@ -3,9 +3,33 @@ import OpenAI from 'openai';
 import { IAIJudgeProvider, DeckEvaluationParams, RawJudgeResponse } from '../types';
 import { activeRubricEvaluator } from '../rubricEvaluator';
 
+export const DEFAULT_FEATHERLESS_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct';
+
+/**
+ * Resolves the effective Featherless model ID.
+ * Priority:
+ *   1. FEATHERLESS_MODEL (or FEATHERLESS_JUDGE_MODEL) environment variable.
+ *   2. Custom/DB model setting, IF not the stale/retired Llama-3.2-11B-Vision-Instruct.
+ *   3. Default: meta-llama/Meta-Llama-3.1-8B-Instruct.
+ */
+export function resolveFeatherlessModel(customOrDbModel?: string | null): string {
+  const envModel = process.env.FEATHERLESS_MODEL || process.env.FEATHERLESS_JUDGE_MODEL;
+  if (envModel && envModel.trim().length > 0) {
+    return envModel.trim();
+  }
+  if (
+    customOrDbModel &&
+    customOrDbModel.trim().length > 0 &&
+    !customOrDbModel.includes('Llama-3.2-11B-Vision-Instruct')
+  ) {
+    return customOrDbModel.trim();
+  }
+  return DEFAULT_FEATHERLESS_MODEL;
+}
+
 export class FeatherlessProvider implements IAIJudgeProvider {
   readonly name = 'featherless' as const;
-  readonly defaultModel = 'meta-llama/Llama-3.2-11B-Vision-Instruct';
+  readonly defaultModel = DEFAULT_FEATHERLESS_MODEL;
 
   private client: OpenAI | null = null;
   private configuredApiKey?: string;
@@ -81,7 +105,7 @@ export class FeatherlessProvider implements IAIJudgeProvider {
     }
 
     const client = this.getClient();
-    const model = params.modelOverride || process.env.FEATHERLESS_JUDGE_MODEL || this.defaultModel;
+    const model = resolveFeatherlessModel(params.modelOverride || this.configuredModel);
 
     const deck = params.deck || (params as any).parsedDeck;
     const teamName = params.teamName || 'Evaluated Team';
@@ -94,15 +118,17 @@ export class FeatherlessProvider implements IAIJudgeProvider {
       submissionName
     ) : 'No deck provided');
 
-    // Multimodal payload for Featherless vision models
-    const contentParts: any[] = [
-      {
-        type: 'text',
-        text: textPrompt,
-      },
-    ];
+    // Multimodal payload for Featherless vision models; plain text for text-only models
+    const isVisionModel = /vision|vl/i.test(model);
+    let userContent: any = textPrompt;
 
-    if (deck?.slides) {
+    if (isVisionModel && deck?.slides) {
+      const contentParts: any[] = [
+        {
+          type: 'text',
+          text: textPrompt,
+        },
+      ];
       for (const slide of deck.slides) {
         if (slide.imageDataUrl) {
           contentParts.push({
@@ -117,6 +143,7 @@ export class FeatherlessProvider implements IAIJudgeProvider {
           });
         }
       }
+      userContent = contentParts;
     }
 
     const maxTokens = Number(process.env.AI_JUDGE_MAX_OUTPUT_TOKENS || 2500);
@@ -126,7 +153,7 @@ export class FeatherlessProvider implements IAIJudgeProvider {
       model,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: contentParts },
+        { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },
       temperature: 0.1,
