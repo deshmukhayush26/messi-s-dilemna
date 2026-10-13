@@ -15,7 +15,6 @@ databases:
     databaseName: ccg_competition
     user: ccg_admin
     plan: free
-    diskSizeGB: 1
     ipAllowList: []
 
 services:
