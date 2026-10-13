@@ -6,6 +6,8 @@ export interface User {
   id: string;
   name: string;
   rollNumber: string;
+  email?: string;
+  passwordHash?: string;
   role: UserRole;
   createdAt: string;
   lastLoginAt?: string;

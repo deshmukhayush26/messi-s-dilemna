@@ -1,14 +1,6 @@
 # render.yaml
-# Staging Blueprint for CCG × OpenAI Competition Platform
-#
-# STAGING CONFIGURATION — OTP microservice intentionally excluded.
-# The Python Webmail OTP service (otp_server.py) is preserved in the repository.
-# To re-enable it for production:
-#   1. Uncomment the "ccg-webmail-otp-service" service block below.
-#   2. Uncomment the OTP_SERVICE_URL fromService reference in ccg-case-backend.
-#   3. Set SMTP_USER and SMTP_PASS in the OTP service environment on Render.
-#   4. Change OTP_ENABLED from "false" to "true" in ccg-case-backend.
-#   5. Redeploy both services.
+# Production Blueprint for CCG × OpenAI Competition Platform
+# Inter Miami’s Messi Dilemma Case Competition
 
 databases:
   - name: ccg-postgres
@@ -18,7 +10,7 @@ databases:
     ipAllowList: []
 
 services:
-  # 1. Express API Backend Service
+  # Express API Backend Service
   - type: web
     name: ccg-case-backend
     env: node
@@ -31,8 +23,7 @@ services:
         value: production
       - key: PORT
         value: 3001
-      # Set CLIENT_ORIGIN to your Vercel frontend URL after first deploy.
-      # Example: https://your-project.vercel.app
+      # Client origins allowed for CORS and secure session cookies
       - key: CLIENT_ORIGIN
         sync: false
       - key: FRONTEND_URL
@@ -41,46 +32,25 @@ services:
         fromDatabase:
           name: ccg-postgres
           property: connectionString
-      # ── OTP Configuration ─────────────────────────────────────────────────
-      # OTP_ENABLED=false disables participant login endpoints (returns HTTP 503)
-      # and shows a staging notice on the login page.
-      # OTP_SERVICE_URL is unused while OTP_ENABLED=false; kept for reference.
-      - key: OTP_ENABLED
-        value: "false"
-      - key: OTP_SERVICE_URL
-        value: "http://localhost:5001"
-      # ── When re-enabling the OTP service, replace the static value above with:
-      # - key: OTP_SERVICE_URL
-      #   fromService:
-      #     name: ccg-webmail-otp-service
-      #     type: web
-      #     property: host
-      - key: OTP_SERVICE_SHARED_SECRET
-        generateValue: true
-      # ── Admin & Security ──────────────────────────────────────────────────
-      # REQUIRED: Set a strong, unique passkey in the Render dashboard.
-      # Do NOT leave this as the default placeholder.
+      # ── Organizer & Security ──────────────────────────────────────────────
+      # Required: Strong unique organizer passkey configured in Render dashboard
       - key: ORGANIZER_SECRET_KEY
         sync: false
-      # ── Storage Configuration ─────────────────────────────────────────────
-      # NOTE: Render Free web services do not have persistent disk mounts.
-      # PostgreSQL provides persistent relational storage.
-      # Decks are stored via S3/R2 when configured, or local ephemeral container storage.
-      # DATA_DIR=/data is omitted because /data is not mounted on the Free plan.
-      # ── AI Judge Configuration ────────────────────────────────────────────
-      # AI judge disabled in staging; enable only after OTP auth is live.
+      # ── AI Case Judge Pipeline (Featherless AI) ───────────────────────────
       - key: AI_JUDGE_ENABLED
-        value: "false"
+        value: "true"
       - key: AI_PROVIDER
-        value: openai
+        value: featherless
+      - key: FEATHERLESS_MODEL
+        value: "meta-llama/Llama-3.2-11B-Vision-Instruct"
+      - key: FEATHERLESS_API_KEY
+        sync: false
       - key: AI_JUDGE_BUDGET_USD
         value: "50.0"
       - key: OPENAI_API_KEY
         sync: false
-      - key: FEATHERLESS_API_KEY
-        sync: false
-      # ── Object Storage (S3 / Cloudflare R2) ──────────────────────────────
-      # When omitted, uploaded decks are stored on the persistent disk below.
+      # ── Object Storage (Cloudflare R2 / AWS S3) ───────────────────────────
+      # Persistent deck storage for containerized environments without persistent disks
       - key: S3_BUCKET
         sync: false
       - key: S3_REGION
@@ -91,47 +61,3 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
-
-  # 2. Python Webmail OTP Authentication Microservice
-  # ── COMMENTED OUT FOR STAGING ─────────────────────────────────────────────
-  # Uncomment this entire block when you are ready to enable OTP login.
-  # Requires SMTP credentials (SMTP_USER, SMTP_PASS) set in the Render dashboard.
-  #
-  # - type: web
-  #   name: ccg-webmail-otp-service
-  #   env: python
-  #   plan: free
-  #   buildCommand: pip install -r requirements.txt
-  #   startCommand: gunicorn otp_server:app --bind 0.0.0.0:$PORT
-  #   healthCheckPath: /api/health
-  #   envVars:
-  #     - key: PORT
-  #       value: 5001
-  #     - key: FLASK_SECRET
-  #       generateValue: true
-  #     - key: DEV_BYPASS_OTP
-  #       value: "false"
-  #     - key: SMTP_HOST
-  #       value: "smtp-auth.iitb.ac.in"
-  #     - key: SMTP_PORT
-  #       value: "587"
-  #     - key: SMTP_USER
-  #       sync: false
-  #     - key: SMTP_PASS
-  #       sync: false
-  #     - key: OTP_EXPIRY_SEC
-  #       value: "600"
-  #     - key: OTP_SERVICE_SHARED_SECRET
-  #       fromService:
-  #         name: ccg-case-backend
-  #         type: web
-  #         envVarKey: OTP_SERVICE_SHARED_SECRET
-
-# ── Vercel Frontend Configuration ─────────────────────────────────────────────
-# The frontend is deployed separately on Vercel. Set these Vercel environment
-# variables in the Vercel dashboard under Project → Settings → Environment Variables:
-#
-#   VITE_API_URL = https://ccg-case-backend.onrender.com
-#
-# Replace the URL above with the actual service URL shown in your Render dashboard
-# after the first deploy. Leave it empty for local development (Vite proxy is used).

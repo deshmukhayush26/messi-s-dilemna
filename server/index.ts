@@ -11,6 +11,9 @@ import { leaderboardRouter } from './routes/leaderboardRoutes';
 import { adminRouter } from './routes/adminRoutes';
 import { timerRouter } from './routes/timerRoutes';
 import { activeTimerService } from './services/timerService';
+import { activeEvaluationService } from './services/evaluationService';
+import { activeFeatherlessProvider } from './services/aiJudge/providers/featherlessProvider';
+import { activeOpenAIProvider } from './services/aiJudge/providers/openAIProvider';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,17 +43,20 @@ const rawOrigins = [process.env.CLIENT_ORIGIN, process.env.FRONTEND_URL]
   .flatMap((url) => (url as string).split(','))
   .map((url) => url.trim().replace(/\/+$/, ''));
 
-const allowedOrigins = rawOrigins.length > 0
-  ? rawOrigins
-  : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://127.0.0.1:3000'];
+const isOriginAllowed = (origin: string): boolean => {
+  if (!origin) return true;
+  if (process.env.NODE_ENV !== 'production') return true;
+  if (rawOrigins.includes(origin)) return true;
+  if (origin === 'https://messi-s-dilemna.vercel.app') return true;
+  if (/^https:\/\/[a-zA-Z0-9_-]+\.vercel\.app$/.test(origin)) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return false;
+};
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server health probes)
-      if (!origin) return callback(null, true);
-      if (process.env.NODE_ENV !== 'production') return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
+      if (!origin || isOriginAllowed(origin)) {
         return callback(null, true);
       }
       return callback(new Error(`CORS policy violation: Origin '${origin}' is not authorized.`));
@@ -78,10 +84,20 @@ const handleHealth = async (_req: express.Request, res: express.Response) => {
   try {
     const timer = await activeTimerService.getTimerState();
     const dbHealth = await checkDbHealthAsync();
+    const isAiEnabled = await activeEvaluationService.isAiJudgeEnabled();
+    const config = await db.queryOne('SELECT ai_judge_provider, ai_judge_model FROM admin_config WHERE id = ?', ['global']);
+    const providerName = config?.ai_judge_provider || process.env.AI_PROVIDER || 'featherless';
+    const provider = providerName === 'featherless' ? activeFeatherlessProvider : activeOpenAIProvider;
+    const configValidation = provider.validateConfig();
+
     res.json({
       status: dbHealth.status === 'connected' ? 'ok' : 'degraded',
       mode: 'CCG × OpenAI Case Competition',
-      aiJudgeEnabled: process.env.AI_JUDGE_ENABLED === 'true',
+      aiJudgeEnabled: isAiEnabled,
+      aiProvider: providerName,
+      aiModel: config?.ai_judge_model || (providerName === 'featherless' ? process.env.FEATHERLESS_JUDGE_MODEL || 'meta-llama/Llama-3.2-11B-Vision-Instruct' : process.env.OPENAI_JUDGE_MODEL || 'gpt-4o'),
+      aiConfigured: configValidation.valid,
+      ...(configValidation.error ? { aiConfigError: configValidation.error } : {}),
       timerStatus: timer.status,
       remainingSeconds: timer.remainingSeconds,
       database: dbHealth,
@@ -119,7 +135,7 @@ async function startServer() {
 
   server = app.listen(PORT, () => {
     console.log(`🚀 CCG Case Evaluation API Server listening on port ${PORT}`);
-    console.log(`ℹ️ Mode: Webmail OTP Auth & Placeholder Score-50 Evaluation (Database: ${db.isPostgres ? 'PostgreSQL' : 'SQLite'})`);
+    console.log(`ℹ️ Mode: Password Auth & Featherless AI Evaluation (Database: ${db.isPostgres ? 'PostgreSQL' : 'SQLite'})`);
   });
 
   const gracefulShutdown = (signal: string) => {
@@ -143,9 +159,12 @@ async function startServer() {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
-startServer().catch((err) => {
-  console.error('Fatal startup error:', err);
-  process.exit(1);
-});
+// Start server if executed directly
+if (process.env.NODE_ENV !== 'test') {
+  startServer().catch((err) => {
+    console.error('FATAL Server startup failure:', err);
+    process.exit(1);
+  });
+}
 
-export { app, server };
+export { app, startServer };

@@ -5,8 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run server\" \"npm run client\"",
-    "dev:full": "concurrently -k -p \"[{name}]\" -n \"OTP,SERVER,CLIENT\" -c \"yellow,cyan,magenta\" \"npm run otp\" \"npm run server\" \"npm run client\"",
-    "otp": "python otp_server.py",
     "test": "tsx scripts/test_workflow.ts",
     "client": "vite",
     "server": "tsx watch server/index.ts",

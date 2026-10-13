@@ -65,6 +65,14 @@ export class FileValidationService {
     };
   }
 
+  async validatePresentationFile(
+    buffer: Buffer,
+    originalFilename: string,
+    options: { maxSlides?: number; minSlides?: number; enforceMin?: boolean } = {}
+  ): Promise<FileValidationResult> {
+    return this.validateDeck(buffer, originalFilename, options);
+  }
+
   private async validatePdf(
     buffer: Buffer,
     maxSlides: number,
@@ -118,7 +126,7 @@ export class FileValidationService {
         valid: false,
         slideCount: pageCount,
         fileType: 'pdf',
-        error: `Presentation contains ${pageCount} slides, exceeding the maximum limit of ${maxSlides} slides. Target is 5–6 slides.`,
+        error: `Presentation contains ${pageCount} slides, exceeds the maximum limit of ${maxSlides} slides. Target is 5–6 slides.`,
       };
     }
 
@@ -216,7 +224,7 @@ export class FileValidationService {
         valid: false,
         slideCount,
         fileType: 'pptx',
-        error: `Presentation contains ${slideCount} slides, exceeding the maximum limit of ${maxSlides} slides. Target is 5–6 slides.`,
+        error: `Presentation contains ${slideCount} slides, exceeds the maximum limit of ${maxSlides} slides. Target is 5–6 slides.`,
       };
     }
 

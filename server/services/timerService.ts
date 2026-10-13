@@ -181,10 +181,38 @@ export class TimerService {
   }
 
   /**
+   * Alias for stopTimer (pauses the timer).
+   */
+  async pauseTimer(organizerName?: string): Promise<EventTimer> {
+    return this.stopTimer(organizerName);
+  }
+
+  /**
+   * Resumes a paused timer.
+   */
+  async resumeTimer(organizerName?: string): Promise<EventTimer> {
+    return this.startTimer(undefined, organizerName);
+  }
+
+  /**
    * Adds additional time (in minutes) to the event countdown.
    */
-  async addTime(minutes: number, organizerName?: string): Promise<EventTimer> {
-    if (!minutes || minutes <= 0) {
+  async addTime(arg1: number | string, arg2?: string | number): Promise<EventTimer> {
+    let minutes: number;
+    let actor: string;
+
+    if (typeof arg1 === 'number') {
+      minutes = arg1;
+      actor = typeof arg2 === 'string' ? arg2 : 'Lead Case Coordinator';
+    } else if (typeof arg2 === 'number') {
+      minutes = arg2;
+      actor = arg1 || 'Lead Case Coordinator';
+    } else {
+      minutes = Number(arg1) || 15;
+      actor = String(arg2 || 'Lead Case Coordinator');
+    }
+
+    if (!minutes || minutes <= 0 || isNaN(minutes)) {
       throw new Error('Additional duration must be greater than zero minutes.');
     }
 
@@ -192,13 +220,13 @@ export class TimerService {
     const addSec = Math.round(minutes * 60);
     const now = new Date();
     const nowIso = now.toISOString();
-    const actor = organizerName || 'Lead Case Coordinator';
 
     let newStatus: TimerStatus = current.status;
 
     if (current.status === 'running') {
-      const currentEndMs = new Date(current.endTimestamp || nowIso).getTime();
-      const newEndIso = new Date(currentEndMs + addSec * 1000).toISOString();
+      const parsedEnd = current.endTimestamp ? new Date(current.endTimestamp).getTime() : NaN;
+      const baseMs = !isNaN(parsedEnd) ? parsedEnd : now.getTime();
+      const newEndIso = new Date(baseMs + addSec * 1000).toISOString();
       const updatedRemaining = Math.max(0, Math.floor((new Date(newEndIso).getTime() - now.getTime()) / 1000));
 
       await db.execute(`

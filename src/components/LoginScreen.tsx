@@ -1,157 +1,326 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Header } from './Header';
 import { apiClient } from '../api/client';
-import { MailCheck, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Lock, User, KeyRound, CheckCircle2, Shield, ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 interface LoginScreenProps {
-  onLoginSuccess: (otpToken: string, name: string, rollNumber: string, email?: string) => void;
+  onLoginSuccess?: (token: string, name: string, rollNumber: string, email?: string) => void;
   onDirectLogin?: (token: string, user: any) => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onDirectLogin }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({ onDirectLogin }) => {
+  const [activeTab, setActiveTab] = useState<'signin' | 'register'>('signin');
   const [name, setName] = useState('');
   const [rollNumber, setRollNumber] = useState('');
+  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [otpEnabled, setOtpEnabled] = useState<boolean | null>(null); // null = loading
 
-  // Check OTP availability on mount for staging notice
-  useEffect(() => {
-    apiClient
-      .get('/auth/status')
-      .then((data) => setOtpEnabled(Boolean(data?.otpEnabled)))
-      .catch(() => setOtpEnabled(false)); // fail-closed: keep login disabled if status is unreachable
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // Block submission when OTP is disabled — belt-and-suspenders on top of the server 503
-    if (otpEnabled === false) {
-      setError('Institutional OTP login is currently unavailable. Please try again later.');
-      return;
-    }
-
-    const cleanName = name.trim();
-    const cleanRoll = rollNumber.trim().toLowerCase();
-
-    if (!cleanName) {
-      setError('Please enter your name');
-      return;
-    }
+    const cleanRoll = rollNumber.trim().toUpperCase();
     if (!cleanRoll) {
-      setError('Please enter your roll number');
+      setError('Please enter your student roll number.');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password.');
       return;
     }
 
     setLoading(true);
     try {
-      const data = await apiClient.post('/auth/send-otp', { name: cleanName, rollNumber: cleanRoll });
+      const data = await apiClient.post('/auth/login', {
+        rollNumber: cleanRoll,
+        password,
+      });
 
-      if (data.bypassed && onDirectLogin && data.token && data.user) {
-        // Dev bypass mode active
+      if (data.token && data.user && onDirectLogin) {
         onDirectLogin(data.token, data.user);
-        return;
       }
-
-      const challengeToken = data.otpToken || data.otp_token || data.sessionId;
-      onLoginSuccess(challengeToken, cleanName, cleanRoll, data.email);
     } catch (err: any) {
-      setError(err.message || 'Network error occurred');
+      setError(err.message || 'Authentication failed. Please verify your credentials.');
     } finally {
       setLoading(false);
     }
   };
 
-  const isStagingMode = otpEnabled === false;
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const cleanName = name.trim();
+    const cleanRoll = rollNumber.trim().toUpperCase();
+
+    if (!cleanName || cleanName.length < 2) {
+      setError('Please enter your full name (minimum 2 characters).');
+      return;
+    }
+    if (!cleanRoll) {
+      setError('Please enter your student roll number.');
+      return;
+    }
+    if (!password || password.length < 8) {
+      setError('Password must be at least 8 characters long.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await apiClient.post('/auth/register', {
+        name: cleanName,
+        rollNumber: cleanRoll,
+        password,
+        email: email.trim() || undefined,
+      });
+
+      if (data.token && data.user && onDirectLogin) {
+        onDirectLogin(data.token, data.user);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Registration failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="login-screen-wrapper">
       <Header />
 
       <div className="center-card-layout">
-        {/* Staging notice banner — shown only when OTP_ENABLED=false */}
-        {isStagingMode && (
+        <div className="grey-auth-card" style={{ maxWidth: 440, width: '100%' }}>
+          {/* Tab Selection */}
           <div
             style={{
-              background: '#fef3c7',
-              border: '1.5px solid #d97706',
-              borderRadius: 10,
-              padding: '12px 16px',
-              marginBottom: 16,
               display: 'flex',
-              alignItems: 'flex-start',
-              gap: 10,
-              fontSize: 13,
-              color: '#92400e',
-              fontWeight: 600,
-              maxWidth: 420,
-              width: '100%',
+              background: '#e2e8f0',
+              borderRadius: 30,
+              padding: 4,
+              marginBottom: 20,
             }}
           >
-            <AlertTriangle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: 1 }} />
-            <span>
-              <strong>Staging Mode:</strong> Institutional OTP login is temporarily unavailable.
-              Participant submissions are disabled. Organizer access remains available.
-            </span>
-          </div>
-        )}
-
-        <form className="grey-auth-card" onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="form-label">Name:</label>
-            <input
-              type="text"
-              className="pill-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter your name"
-              autoFocus
-              required
-              disabled={isStagingMode}
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Roll number:</label>
-            <input
-              type="text"
-              className="pill-input"
-              value={rollNumber}
-              onChange={(e) => setRollNumber(e.target.value)}
-              placeholder="e.g. 23b1234 or 22m0456"
-              required
-              disabled={isStagingMode}
-            />
-          </div>
-
-          {error && (
-            <div style={{ color: '#dc2626', fontSize: 14, textAlign: 'center', fontWeight: 600 }}>
-              {error}
-            </div>
-          )}
-
-          <div className="auth-submit-container">
-            <button type="submit" className="orange-pill-btn" disabled={loading || isStagingMode}>
-              {loading ? 'Sending Webmail OTP...' : isStagingMode ? 'Login Unavailable' : 'Submit'}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('signin');
+                setError(null);
+              }}
+              style={{
+                flex: 1,
+                padding: '8px 16px',
+                borderRadius: 24,
+                border: 'none',
+                background: activeTab === 'signin' ? '#ffffff' : 'transparent',
+                fontWeight: 700,
+                fontSize: 13,
+                color: activeTab === 'signin' ? '#0f172a' : '#64748b',
+                cursor: 'pointer',
+                boxShadow: activeTab === 'signin' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('register');
+                setError(null);
+              }}
+              style={{
+                flex: 1,
+                padding: '8px 16px',
+                borderRadius: 24,
+                border: 'none',
+                background: activeTab === 'register' ? '#ffffff' : 'transparent',
+                fontWeight: 700,
+                fontSize: 13,
+                color: activeTab === 'register' ? '#0f172a' : '#64748b',
+                cursor: 'pointer',
+                boxShadow: activeTab === 'register' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              Create Account
             </button>
           </div>
 
-          {!isStagingMode && (
-            <div className="mock-dev-notice">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
-                <MailCheck size={16} color="#d97706" /> Institutional Webmail Verification
+          {activeTab === 'signin' ? (
+            <form onSubmit={handleSignIn}>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <User size={15} color="#475569" /> Student Roll Number:
+                </label>
+                <input
+                  type="text"
+                  className="pill-input"
+                  value={rollNumber}
+                  onChange={(e) => setRollNumber(e.target.value)}
+                  placeholder="e.g. 23B1234 or 22M0456"
+                  autoFocus
+                  required
+                />
               </div>
-              <div>
-                Enter your official student roll number. A 6-digit verification code will be sent to your institutional email.
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Lock size={15} color="#475569" /> Password:
+                </label>
+                <input
+                  type="password"
+                  className="pill-input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                />
               </div>
-              <div style={{ fontSize: 11, color: '#16a34a', display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                <CheckCircle2 size={13} /> Open Participation: All eligible institutional roll numbers accepted.
+
+              {error && (
+                <div style={{ color: '#dc2626', fontSize: 13, background: '#fee2e2', padding: 10, borderRadius: 10, marginBottom: 14 }}>
+                  {error}
+                </div>
+              )}
+
+              <div className="auth-submit-container">
+                <button type="submit" className="orange-pill-btn" style={{ width: '100%' }} disabled={loading}>
+                  {loading ? 'Signing in...' : 'Sign In to Challenge'}
+                </button>
               </div>
-            </div>
+
+              <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12, color: '#64748b' }}>
+                Don't have an account yet?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('register');
+                    setError(null);
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#ff4d88', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                >
+                  Create one now
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleRegister}>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <User size={15} color="#475569" /> Full Name:
+                </label>
+                <input
+                  type="text"
+                  className="pill-input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Aarav Sharma"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <KeyRound size={15} color="#475569" /> Student Roll Number:
+                </label>
+                <input
+                  type="text"
+                  className="pill-input"
+                  value={rollNumber}
+                  onChange={(e) => setRollNumber(e.target.value)}
+                  placeholder="e.g. 23B1234 or 22M0456"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Lock size={15} color="#475569" /> Password (minimum 8 chars):
+                </label>
+                <input
+                  type="password"
+                  className="pill-input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Create a secure password"
+                  minLength={8}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Institutional Email (Optional):
+                </label>
+                <input
+                  type="email"
+                  className="pill-input"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="e.g. student@college.edu"
+                />
+              </div>
+
+              {error && (
+                <div style={{ color: '#dc2626', fontSize: 13, background: '#fee2e2', padding: 10, borderRadius: 10, marginBottom: 14 }}>
+                  {error}
+                </div>
+              )}
+
+              <div className="auth-submit-container">
+                <button type="submit" className="orange-pill-btn" style={{ width: '100%' }} disabled={loading}>
+                  {loading ? 'Creating Account...' : 'Register & Enter Challenge'}
+                </button>
+              </div>
+
+              <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12, color: '#64748b' }}>
+                Already registered?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('signin');
+                    setError(null);
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#ff4d88', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                >
+                  Sign in with password
+                </button>
+              </div>
+            </form>
           )}
-        </form>
+
+          {/* Security Notice */}
+          <div className="mock-dev-notice" style={{ marginTop: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
+              <CheckCircle2 size={15} color="#16a34a" /> Secure Participant Authentication
+            </div>
+            <div>
+              Passwords are encrypted using cryptographic scrypt hashes. Identity is verified per-account on submission.
+            </div>
+            <div style={{ marginTop: 10, borderTop: '1px solid #e2e8f0', paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: '#64748b' }}>Case Coordinator / Judge?</span>
+              <Link
+                to="/admin"
+                style={{
+                  fontSize: 12,
+                  color: '#0284c7',
+                  fontWeight: 700,
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <Shield size={13} /> Organizer Portal <ArrowRight size={12} />
+              </Link>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

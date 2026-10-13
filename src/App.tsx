@@ -10,7 +10,6 @@ import {
 } from 'react-router-dom';
 import { Navigation } from './components/Navigation';
 import { LoginScreen } from './components/LoginScreen';
-import { OtpScreen } from './components/OtpScreen';
 import { ChallengeScreen } from './components/ChallengeScreen';
 import { LeaderboardScreen } from './components/LeaderboardScreen';
 import { AdminScreen } from './components/AdminScreen';
@@ -18,23 +17,9 @@ import { ApiContractDocs } from './components/ApiContractDocs';
 import { NotFoundScreen } from './components/NotFoundScreen';
 import { apiClient } from './api/client';
 
-interface PendingOtpState {
-  otpToken: string;
-  name: string;
-  rollNumber: string;
-  email: string;
-}
-
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-
-  const [pendingOtp, setPendingOtp] = useState<PendingOtpState>({
-    otpToken: '',
-    name: '',
-    rollNumber: '',
-    email: '',
-  });
 
   const [authToken, setAuthToken] = useState<string | null>(() => {
     return localStorage.getItem('ccg_auth_token') || null;
@@ -65,7 +50,6 @@ const AppContent: React.FC = () => {
           }
         })
         .catch(() => {
-          // Token expired or invalid
           localStorage.removeItem('ccg_auth_token');
           setAuthToken(null);
           setCurrentUser(null);
@@ -76,30 +60,7 @@ const AppContent: React.FC = () => {
     }
   }, [location.pathname, navigate]);
 
-  const handleLoginSuccess = (
-    otpToken: string,
-    name: string,
-    rollNumber: string,
-    email?: string
-  ) => {
-    const state: PendingOtpState = {
-      otpToken,
-      name,
-      rollNumber,
-      email: email || '',
-    };
-    setPendingOtp(state);
-    navigate('/verify-otp', { state });
-  };
-
   const handleDirectLogin = (token: string, user: any) => {
-    localStorage.setItem('ccg_auth_token', token);
-    setAuthToken(token);
-    setCurrentUser(user);
-    navigate('/submission');
-  };
-
-  const handleOtpVerified = (token: string, user: any) => {
     localStorage.setItem('ccg_auth_token', token);
     setAuthToken(token);
     setCurrentUser(user);
@@ -127,9 +88,6 @@ const AppContent: React.FC = () => {
     navigate('/');
   };
 
-  // Read OTP verification params from router state if available
-  const routerState = (location.state as PendingOtpState) || pendingOtp;
-
   return (
     <div className="app-viewport">
       {/* Decorative vertical striped bar on left margin */}
@@ -152,30 +110,15 @@ const AppContent: React.FC = () => {
                 currentUser ? (
                   <Navigate to="/submission" replace />
                 ) : (
-                  <LoginScreen
-                    onLoginSuccess={handleLoginSuccess}
-                    onDirectLogin={handleDirectLogin}
-                  />
+                  <LoginScreen onDirectLogin={handleDirectLogin} />
                 )
               }
             />
 
-            {/* 2. OTP Verification */}
-            <Route
-              path="/verify-otp"
-              element={
-                <OtpScreen
-                  otpToken={routerState.otpToken}
-                  name={routerState.name}
-                  rollNumber={routerState.rollNumber}
-                  email={routerState.email}
-                  onOtpVerified={handleOtpVerified}
-                  onBack={() => navigate('/')}
-                />
-              }
-            />
+            {/* Legacy OTP route redirect */}
+            <Route path="/verify-otp" element={<Navigate to="/" replace />} />
 
-            {/* 3. Case Brief & Presentation Submission (Protected) */}
+            {/* 2. Case Brief & Presentation Submission (Protected) */}
             <Route
               path="/submission"
               element={
@@ -195,10 +138,10 @@ const AppContent: React.FC = () => {
             {/* Handle legacy / typo route redirect */}
             <Route path="/submision" element={<Navigate to="/submission" replace />} />
 
-            {/* 4. Public Leaderboard */}
+            {/* 3. Public Leaderboard */}
             <Route path="/leaderboard" element={<LeaderboardScreen />} />
 
-            {/* 5. Organizer Admin Portal */}
+            {/* 4. Organizer Admin Portal */}
             <Route
               path="/admin"
               element={
@@ -210,10 +153,10 @@ const AppContent: React.FC = () => {
               }
             />
 
-            {/* 6. API Docs & Contract */}
+            {/* 5. API Docs & Contract */}
             <Route path="/docs" element={<ApiContractDocs />} />
 
-            {/* 7. Not Found Route (404) */}
+            {/* 6. Not Found Route (404) */}
             <Route path="*" element={<NotFoundScreen />} />
           </Routes>
         )}

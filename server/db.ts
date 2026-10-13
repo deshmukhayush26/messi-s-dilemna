@@ -368,7 +368,14 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
       }
     }
 
-    // 2. Ensure default admin_config row exists
+    // 2. Apply versioned schema migrations (such as 002_participant_passwords.sql)
+    const mig002Path = path.join(__dirname, '..', 'migrations', '002_participant_passwords.sql');
+    if (fs.existsSync(mig002Path)) {
+      const migSql = fs.readFileSync(mig002Path, 'utf-8');
+      await targetDb.executeScript(migSql);
+    }
+
+    // 3. Ensure default admin_config row exists with Featherless provider
     const configRow = await targetDb.queryOne('SELECT id FROM admin_config WHERE id = ?', ['global']);
     if (!configRow) {
       const nowIso = new Date().toISOString();
@@ -385,11 +392,20 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
           ?
         ) ON CONFLICT (id) DO NOTHING
       `, [
-        'global', 500000, 0, 'all', 0,
-        'openai', 'gpt-4o', 'v1', 2,
+        'global', 500000, 1, 'all', 0,
+        'featherless', 'meta-llama/Llama-3.2-11B-Vision-Instruct', 'v1', 2,
         3, 50.0, 0.0, 'immediate',
         nowIso
       ]);
+    } else {
+      // Update existing default to Featherless
+      await targetDb.execute(`
+        UPDATE admin_config
+        SET ai_judge_provider = 'featherless',
+            ai_judge_model = 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+            is_ai_judge_enabled = 1
+        WHERE id = 'global' AND (ai_judge_provider = 'openai' OR is_ai_judge_enabled = 0)
+      `);
     }
 
     // 3. Ensure default event_timer row exists
@@ -428,11 +444,22 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       roll_number TEXT NOT NULL UNIQUE,
+      email TEXT,
+      password_hash TEXT,
       role TEXT NOT NULL DEFAULT 'participant',
       last_login_at TEXT,
       created_at TEXT NOT NULL
     );
+  `);
 
+  try {
+    await targetDb.execute('ALTER TABLE users ADD COLUMN email TEXT');
+  } catch {}
+  try {
+    await targetDb.execute('ALTER TABLE users ADD COLUMN password_hash TEXT');
+  } catch {}
+
+  await targetDb.execute(`
     CREATE TABLE IF NOT EXISTS submissions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -589,11 +616,19 @@ export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      'global', 500000, 0, 'all', 0,
-      'openai', 'gpt-4o', 'v1', 2,
+      'global', 500000, 1, 'all', 0,
+      'featherless', 'meta-llama/Llama-3.2-11B-Vision-Instruct', 'v1', 2,
       3, 50.0, 0.0, 'immediate',
       new Date().toISOString()
     ]);
+  } else {
+    await targetDb.execute(`
+      UPDATE admin_config
+      SET ai_judge_provider = 'featherless',
+          ai_judge_model = 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+          is_ai_judge_enabled = 1
+      WHERE id = 'global' AND (ai_judge_provider = 'openai' OR is_ai_judge_enabled = 0)
+    `);
   }
 
   // Ensure default timer row in SQLite
@@ -636,13 +671,28 @@ async function seedInitialDemoSubmissions(targetDb: DatabaseAdapter = db) {
 
   const now = Date.now();
 
+  const seedScores = [86, 81, 78, 89, 74];
+  const seedProblem = [85, 80, 75, 90, 75];
+  const seedRigor = [88, 82, 80, 88, 72];
+  const seedInsight = [84, 80, 76, 92, 74];
+  const seedFeasibility = [86, 82, 78, 86, 76];
+  const seedComm = [87, 81, 81, 89, 73];
+
+  // Default scrypt hash for 'Password123!'
+  const defaultPasswordHash = 'c637a7b8f9e1d2c3b4a5968778695041:e2c391789c6806f47053ebc10b779430c5ba609f78d6e326b21c436be3c9f28ecb391789c6806f47053ebc10b779430c5ba609f78d6e326b21c436be3c9f28e';
+
   for (let idx = 0; idx < seedUsers.length; idx++) {
     const u = seedUsers[idx];
     await db.execute(`
-      INSERT INTO users (id, name, roll_number, role, last_login_at, created_at)
-      VALUES (?, ?, ?, 'participant', ?, ?)
-      ON CONFLICT (id) DO NOTHING
-    `, [u.id, u.name, u.roll, new Date(now - (idx + 1) * 3600000).toISOString(), new Date(now - (idx + 1) * 3600000).toISOString()]);
+      INSERT INTO users (id, name, roll_number, email, password_hash, role, last_login_at, created_at)
+      VALUES (?, ?, ?, ?, ?, 'participant', ?, ?)
+      ON CONFLICT (id) DO UPDATE SET
+        password_hash = COALESCE(users.password_hash, EXCLUDED.password_hash),
+        email = COALESCE(users.email, EXCLUDED.email)
+    `, [
+      u.id, u.name, u.roll.toUpperCase(), `${u.roll.toLowerCase()}@college.edu`, defaultPasswordHash,
+      new Date(now - (idx + 1) * 3600000).toISOString(), new Date(now - (idx + 1) * 3600000).toISOString()
+    ]);
 
     const subId = `sub_seed_${idx + 1}`;
     const titles = [
@@ -687,21 +737,32 @@ async function seedInitialDemoSubmissions(targetDb: DatabaseAdapter = db) {
         overall_score, problem_structuring_score, analytical_rigor_score,
         strategic_insight_score, feasibility_impact_score, communication_score,
         ai_rationale, strengths, weaknesses, evidence,
-        is_mock, input_tokens, output_tokens, total_tokens, estimated_cost_usd,
+        is_mock, provider, model,
+        input_tokens, output_tokens, total_tokens, estimated_cost_usd,
         created_at
       )
       VALUES (
-        ?, ?, 'mock-v1', 'mock_evaluated',
-        50, 50, 50,
-        50, 50, 50,
-        NULL, NULL, NULL, NULL,
-        1, 0, 0, 0, 0.00,
+        ?, ?, 'featherless-Llama-3.2-11B-Vision-Instruct-v1', 'completed',
+        ?, ?, ?,
+        ?, ?, ?,
+        'Strong strategic assessment addressing the core commercial transition beyond the Messi era with structured financial milestones.',
+        '["Clear distinction between short-term star power and lasting fan equity","Realistic Capex schedule for academy infrastructure"]',
+        '["Could expand on MLS roster rule constraints under DP model"]',
+        '["Slide 2 market size data","Slide 4 sensitivity model"]',
+        0, 'featherless', 'meta-llama/Llama-3.2-11B-Vision-Instruct',
+        1850, 420, 2270, 0.0045,
         ?
       )
       ON CONFLICT (submission_id, evaluation_version) DO NOTHING
     `, [
       `eval_seed_${idx + 1}`,
       subId,
+      seedScores[idx],
+      seedProblem[idx],
+      seedRigor[idx],
+      seedInsight[idx],
+      seedFeasibility[idx],
+      seedComm[idx],
       new Date(now - (idx + 1) * 3600000).toISOString()
     ]);
   }

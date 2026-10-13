@@ -14,7 +14,7 @@ export interface IEvaluationService {
   isAiJudgeEnabled(): Promise<boolean>;
   evaluateSubmission(
     submissionId: string,
-    options?: { forceAi?: boolean; forceMock?: boolean; provider?: 'openai' | 'featherless'; model?: string }
+    options?: { forceAi?: boolean; provider?: 'openai' | 'featherless'; model?: string }
   ): Promise<Evaluation>;
   getEvaluation(submissionId: string): Promise<Evaluation | null>;
   getTokenUsageStats(): Promise<TokenUsageStats>;
@@ -33,22 +33,32 @@ export interface IEvaluationService {
 export class ProductionEvaluationService implements IEvaluationService {
   /**
    * Determines if the Real AI Judge is currently enabled.
+   * Prioritizes explicit environment variable if set; otherwise falls back to database admin_config.
+   * Defaults to true in production.
    */
   async isAiJudgeEnabled(): Promise<boolean> {
+    if (process.env.AI_JUDGE_ENABLED === 'false') {
+      return false;
+    }
+    if (process.env.AI_JUDGE_ENABLED === 'true') {
+      return true;
+    }
     const config = await db.queryOne('SELECT is_ai_judge_enabled FROM admin_config WHERE id = ?', ['global']);
-    const dbEnabled = Boolean(config?.is_ai_judge_enabled);
-    const envEnabled = process.env.AI_JUDGE_ENABLED === 'true';
-    return envEnabled || dbEnabled;
+    if (config && config.is_ai_judge_enabled !== undefined && config.is_ai_judge_enabled !== null) {
+      return Boolean(config.is_ai_judge_enabled);
+    }
+    return true;
   }
 
   /**
-   * Evaluates a submission.
-   * If AI Judge is disabled (default): Creates an idempotent score-50 placeholder record.
-   * If AI Judge is enabled: Validates provider credentials, checks budget, and runs the real AI pipeline.
+   * Evaluates a submission using the real Featherless (or OpenAI) AI pipeline.
+   * Never generates or publishes placeholder score-50 records.
+   * If credentials or prerequisites are missing, records a 'failed' evaluation
+   * detailing the exact missing configuration so it cannot contaminate the leaderboard.
    */
   async evaluateSubmission(
     submissionId: string,
-    options: { forceAi?: boolean; forceMock?: boolean; provider?: 'openai' | 'featherless'; model?: string } = {}
+    options: { forceAi?: boolean; provider?: 'openai' | 'featherless'; model?: string } = {}
   ): Promise<Evaluation> {
     if (!submissionId) {
       throw new Error('A valid submission ID is required for evaluation.');
@@ -63,58 +73,110 @@ export class ProductionEvaluationService implements IEvaluationService {
       SELECT * FROM evaluations WHERE submission_id = ? ORDER BY created_at DESC LIMIT 1
     `, [submissionId]);
 
-    if (existingEval && !options.forceAi && !options.forceMock) {
+    // Return existing evaluation if already completed successfully and not forced
+    if (existingEval && existingEval.evaluation_status === 'completed' && !options.forceAi) {
       return this.mapRowToEvaluation(existingEval);
     }
 
-    const isEnabled = await this.isAiJudgeEnabled();
-    const shouldRunAi = (options.forceAi || isEnabled) && !options.forceMock;
-
-    if (!shouldRunAi) {
-      return this.evaluateWithMock(submissionId);
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
-    // REAL AI JUDGE PIPELINE (OpenAI / Featherless)
+    // REAL AI JUDGE PIPELINE (Featherless / OpenAI)
     // ─────────────────────────────────────────────────────────────────────────
     const config = await db.queryOne('SELECT * FROM admin_config WHERE id = ?', ['global']);
-    const providerName = options.provider || config?.ai_judge_provider || (process.env.AI_PROVIDER as any) || 'openai';
-    const provider = providerName === 'featherless' ? activeFeatherlessProvider : activeOpenAIProvider;
+    const providerName: 'openai' | 'featherless' =
+      options.provider ||
+      (config?.ai_judge_provider as any) ||
+      (process.env.AI_PROVIDER as any) ||
+      'featherless';
+
+    const provider = providerName === 'openai' ? activeOpenAIProvider : activeFeatherlessProvider;
+    const defaultModel =
+      providerName === 'featherless'
+        ? (process.env.FEATHERLESS_JUDGE_MODEL || 'meta-llama/Llama-3.2-11B-Vision-Instruct')
+        : (process.env.OPENAI_JUDGE_MODEL || 'gpt-4o');
+    const selectedModel = options.model || defaultModel;
 
     // 1. Validate Provider Configuration
     const configCheck = provider.validateConfig();
     if (!configCheck.valid) {
-      throw new Error(`AI Judge configuration error (${providerName}): ${configCheck.error}`);
+      console.warn(`[AI Judge] Configuration validation failed for ${providerName}: ${configCheck.error}`);
+      return this.recordFailedEvaluation(
+        submissionId,
+        existingEval?.id,
+        providerName,
+        selectedModel,
+        `AI Judge configuration error (${providerName}): ${configCheck.error}`
+      );
     }
 
     // 2. Budget Check
     const budgetCheck = await activeTokenUsageService.checkBudgetAvailable();
     if (!budgetCheck.allowed) {
-      throw new Error(budgetCheck.reason || 'AI Judge budget exhausted.');
+      console.warn(`[AI Judge] Budget check failed: ${budgetCheck.reason}`);
+      return this.recordFailedEvaluation(
+        submissionId,
+        existingEval?.id,
+        providerName,
+        selectedModel,
+        budgetCheck.reason || 'AI Judge spending budget exhausted.'
+      );
     }
 
     // 3. Retrieve deck file from storage
     const storageKey = submission.storage_key || `decks/${submission.deck_file_name}`;
-    const deckBuffer = await activeStorageService.getDeckBuffer(storageKey);
+    let deckBuffer: Buffer | null = null;
+    try {
+      deckBuffer = await activeStorageService.getDeckBuffer(storageKey);
+    } catch (err: any) {
+      console.warn(`[AI Judge] Storage error reading '${storageKey}':`, err.message);
+    }
+
     if (!deckBuffer) {
-      throw new Error(`Deck presentation file not found in storage for key '${storageKey}'.`);
+      return this.recordFailedEvaluation(
+        submissionId,
+        existingEval?.id,
+        providerName,
+        selectedModel,
+        `Deck presentation file not found in storage for key '${storageKey}'.`
+      );
     }
 
     // 4. Parse deck with DeckParser
     const originalFilename = submission.deck_file_name || 'deck.pdf';
-    const parsedDeck = await activeDeckParser.parseDeck(deckBuffer, originalFilename);
+    let parsedDeck: any;
+    try {
+      parsedDeck = await activeDeckParser.parseDeck(deckBuffer, originalFilename);
+    } catch (err: any) {
+      return this.recordFailedEvaluation(
+        submissionId,
+        existingEval?.id,
+        providerName,
+        selectedModel,
+        `Failed to parse presentation deck: ${err.message}`
+      );
+    }
 
-    // 5. Run AI Judge Provider
-    const model = options.model || (providerName === 'featherless' ? process.env.FEATHERLESS_JUDGE_MODEL : process.env.OPENAI_JUDGE_MODEL);
-    const evalResponse = await provider.evaluateDeck({
-      submissionId,
-      teamName: submission.team_name,
-      submissionName: submission.submission_name,
-      deck: parsedDeck,
-      modelOverride: model,
-    });
+    // 5. Run AI Judge Provider with timeout & error handling
+    let evalResponse: any;
+    try {
+      evalResponse = await provider.evaluateDeck({
+        submissionId,
+        teamName: submission.team_name,
+        submissionName: submission.submission_name,
+        deck: parsedDeck,
+        modelOverride: selectedModel,
+      });
+    } catch (err: any) {
+      console.error(`[AI Judge] Provider execution error (${providerName}):`, err);
+      return this.recordFailedEvaluation(
+        submissionId,
+        existingEval?.id,
+        providerName,
+        selectedModel,
+        `AI Evaluation execution failed (${providerName}): ${err.message}`
+      );
+    }
 
-    // 6. Calculate Deterministic Final Score
+    // 6. Calculate Deterministic Final Score from Rubric Criteria
     const scoreResult = activeScoreCalculator.calculateFinalScore(evalResponse.structuredOutput);
     const costUsd = activeTokenUsageService.calculateCost(evalResponse.model, evalResponse.usage);
     await activeTokenUsageService.recordCost(costUsd);
@@ -130,7 +192,7 @@ export class ProductionEvaluationService implements IEvaluationService {
     const evalId = priorEval?.id || `eval_${crypto.randomUUID().slice(0, 8)}`;
     const completionIso = new Date().toISOString();
 
-    // 8. Persist Evaluation
+    // 8. Persist Real Evaluation to Database
     await db.execute(`
       INSERT INTO evaluations (
         id, submission_id, evaluation_version, evaluation_status,
@@ -222,7 +284,7 @@ export class ProductionEvaluationService implements IEvaluationService {
       evalResponse.structuredOutput.needs_human_review ? 1 : 0,
       JSON.stringify(evalResponse.structuredOutput.review_flags),
       1,
-      completionIso
+      completionIso,
     ]);
 
     const inserted = await db.queryOne('SELECT * FROM evaluations WHERE id = ?', [evalId]);
@@ -230,18 +292,18 @@ export class ProductionEvaluationService implements IEvaluationService {
   }
 
   /**
-   * Fallback / Default: Evaluates with Score-50 Placeholder logic.
+   * Persists a failed evaluation record without fake placeholder scores.
+   * Records overallScore = 0 and status = 'failed' so the entry is never
+   * published on the public leaderboard while explaining the exact error to organizers.
    */
-  private async evaluateWithMock(submissionId: string): Promise<Evaluation> {
-    const existing = await db.queryOne(`
-      SELECT * FROM evaluations WHERE submission_id = ? ORDER BY created_at DESC LIMIT 1
-    `, [submissionId]);
-
-    if (existing) {
-      return this.mapRowToEvaluation(existing);
-    }
-
-    const evalId = `eval_${crypto.randomUUID().slice(0, 8)}`;
+  private async recordFailedEvaluation(
+    submissionId: string,
+    existingEvalId: string | undefined,
+    provider: string,
+    model: string,
+    errorMessage: string
+  ): Promise<Evaluation> {
+    const evalId = existingEvalId || `eval_${crypto.randomUUID().slice(0, 8)}`;
     const nowIso = new Date().toISOString();
 
     await db.execute(`
@@ -256,20 +318,32 @@ export class ProductionEvaluationService implements IEvaluationService {
         created_at
       )
       VALUES (
-        ?, ?, 'mock-v1', 'mock_evaluated',
-        50, 50, 50,
-        50, 50, 50,
-        NULL, NULL, NULL, NULL,
-        1, 'mock', 'mock',
+        ?, ?, 'failed-v1', 'failed',
+        0, 0, 0,
+        0, 0, 0,
+        ?, NULL, NULL, NULL,
+        0, ?, ?,
         0, 0, 0, 0, 0,
         0.00,
         ?
       )
-      ON CONFLICT (id) DO NOTHING
-    `, [evalId, submissionId, nowIso]);
+      ON CONFLICT (id) DO UPDATE SET
+        evaluation_version = EXCLUDED.evaluation_version,
+        evaluation_status = 'failed',
+        overall_score = 0,
+        problem_structuring_score = 0,
+        analytical_rigor_score = 0,
+        strategic_insight_score = 0,
+        feasibility_impact_score = 0,
+        communication_score = 0,
+        ai_rationale = EXCLUDED.ai_rationale,
+        is_mock = 0,
+        provider = EXCLUDED.provider,
+        model = EXCLUDED.model
+    `, [evalId, submissionId, errorMessage, provider, model, nowIso]);
 
-    const inserted = await db.queryOne('SELECT * FROM evaluations WHERE id = ?', [evalId]);
-    return this.mapRowToEvaluation(inserted);
+    const failedRow = await db.queryOne('SELECT * FROM evaluations WHERE id = ?', [evalId]);
+    return this.mapRowToEvaluation(failedRow);
   }
 
   /**
@@ -303,9 +377,8 @@ export class ProductionEvaluationService implements IEvaluationService {
       await activeEvaluationAuditService.archiveEvaluation(existing, options.reason || 'organizer_re_evaluation_request');
     }
 
-    const isEnabled = await this.isAiJudgeEnabled();
     return this.evaluateSubmission(submissionId, {
-      forceAi: isEnabled,
+      forceAi: true,
       provider: options.provider,
       model: options.model,
     });
@@ -367,10 +440,10 @@ export class ProductionEvaluationService implements IEvaluationService {
       if (row.review_flags) reviewFlags = JSON.parse(row.review_flags);
     } catch {}
 
-    // If human override was applied, reflect effective overall score
-    const effectiveOverallScore = row.human_override_score !== null && row.human_override_score !== undefined
-      ? Number(row.human_override_score)
-      : row.overall_score;
+    const effectiveOverallScore =
+      row.human_override_score !== null && row.human_override_score !== undefined
+        ? Number(row.human_override_score)
+        : Number(row.overall_score || 0);
 
     return {
       id: row.id,
@@ -379,19 +452,19 @@ export class ProductionEvaluationService implements IEvaluationService {
       evaluationStatus: row.evaluation_status,
       overallScore: effectiveOverallScore,
       scores: {
-        problemStructuring: row.problem_structuring_score,
-        analyticalRigor: row.analytical_rigor_score,
-        strategicInsight: row.strategic_insight_score,
-        feasibilityImpact: row.feasibility_impact_score,
-        communication: row.communication_score,
+        problemStructuring: Number(row.problem_structuring_score || 0),
+        analyticalRigor: Number(row.analytical_rigor_score || 0),
+        strategicInsight: Number(row.strategic_insight_score || 0),
+        feasibilityImpact: Number(row.feasibility_impact_score || 0),
+        communication: Number(row.communication_score || 0),
       },
-      aiRationale: row.ai_rationale,
+      aiRationale: row.ai_rationale || undefined,
       strengths: Array.isArray(strengths) ? strengths.join('\n') : row.strengths,
       weaknesses: Array.isArray(weaknesses) ? weaknesses.join('\n') : row.weaknesses,
       evidence: Array.isArray(evidence) ? JSON.stringify(evidence) : row.evidence,
       isMock: Boolean(row.is_mock),
-      provider: row.provider || (row.is_mock ? 'mock' : 'openai'),
-      model: row.model || 'mock',
+      provider: row.provider || 'featherless',
+      model: row.model || 'meta-llama/Llama-3.2-11B-Vision-Instruct',
       inputTokens: row.input_tokens || 0,
       outputTokens: row.output_tokens || 0,
       cachedTokens: row.cached_tokens || 0,

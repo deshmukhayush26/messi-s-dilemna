@@ -156,7 +156,7 @@ submissionRouter.post(
         nowIso
       ]);
 
-      // 6. Trigger Idempotent Score-50 Placeholder Evaluation
+      // 6. Trigger Real AI Judge Evaluation Pipeline
       const evaluation = await activeEvaluationService.evaluateSubmission(subId);
 
       // 7. Retrieve persisted submission record

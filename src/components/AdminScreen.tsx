@@ -1887,7 +1887,7 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
                     </div>
                     {inspectEvaluation.isMock && (
                       <span style={{ fontSize: 11, color: '#9a3412', fontWeight: 700 }}>
-                        (Mock placeholder score)
+                        (Legacy Mock Evaluation)
                       </span>
                     )}
                   </div>
