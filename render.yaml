@@ -6,8 +6,9 @@ databases:
   - name: ccg-postgres
     databaseName: ccg_competition
     user: ccg_admin
-    plan: standard
-    ipAllowList: [] # internal only
+    plan: 0.1c-256mb
+    diskSizeGB: 5
+    ipAllowList: []
 
 services:
   # 1. Express API Backend Service
