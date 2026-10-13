@@ -89,10 +89,6 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
-    disk:
-      name: ccg-storage-disk
-      mountPath: /data
-      sizeGB: 1
 
   # 2. Python Webmail OTP Authentication Microservice
   # ── COMMENTED OUT FOR STAGING ─────────────────────────────────────────────
