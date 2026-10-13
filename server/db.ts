@@ -34,6 +34,8 @@ export interface DatabaseAdapter {
   query<T = any>(sql: string, params?: any[]): Promise<T[]>;
   queryOne<T = any>(sql: string, params?: any[]): Promise<T | null>;
   execute(sql: string, params?: any[]): Promise<{ rowCount: number }>;
+  /** Run a raw multi-statement SQL script. Used for migration files only. */
+  executeScript(sql: string): Promise<void>;
   transaction<T>(fn: (trx: DatabaseAdapter) => Promise<T>): Promise<T>;
   checkHealth(): Promise<{ status: string; engine: string; tables: number; ready: boolean; error?: string }>;
   close(): Promise<void>;
@@ -118,6 +120,18 @@ class PostgresDatabaseAdapter implements DatabaseAdapter {
     return { rowCount: res.rowCount ?? 0 };
   }
 
+  async executeScript(sql: string): Promise<void> {
+    // Acquire a client from the pool and run the full script string in simple-query
+    // mode. pg supports multiple statements separated by ; in a single client.query()
+    // when called without parameters.
+    const client = await this.pool.connect();
+    try {
+      await client.query(sql);
+    } finally {
+      client.release();
+    }
+  }
+
   async transaction<T>(fn: (trx: DatabaseAdapter) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
@@ -135,6 +149,9 @@ class PostgresDatabaseAdapter implements DatabaseAdapter {
         execute: async (sql: string, params: any[] = []): Promise<{ rowCount: number }> => {
           const res = await client.query(translateSqlForPostgres(sql), params);
           return { rowCount: res.rowCount ?? 0 };
+        },
+        executeScript: async (scriptSql: string): Promise<void> => {
+          await client.query(scriptSql);
         },
         transaction: async <R>(subFn: (subTrx: DatabaseAdapter) => Promise<R>): Promise<R> => {
           return subFn(trxAdapter);
@@ -223,6 +240,10 @@ class SqliteDatabaseAdapter implements DatabaseAdapter {
     return { rowCount: Number(result.changes) };
   }
 
+  async executeScript(sql: string): Promise<void> {
+    this.sqlite.exec(sql);
+  }
+
   async transaction<T>(fn: (trx: DatabaseAdapter) => Promise<T>): Promise<T> {
     this.sqlite.exec('BEGIN TRANSACTION;');
     try {
@@ -300,7 +321,10 @@ export async function initDb(): Promise<void> {
       if (fs.existsSync(schemaPath)) {
         console.log('📦 Applying PostgreSQL schema from migrations/001_initial_schema.sql...');
         const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-        await db.execute(schemaSql);
+        await db.executeScript(schemaSql);
+        console.log('✅ Schema migration applied successfully.');
+      } else {
+        throw new Error('FATAL: migrations/001_initial_schema.sql not found. Cannot initialise PostgreSQL schema.');
       }
     }
 

@@ -1,13 +1,21 @@
 # render.yaml
-# Production Blueprint for CCG × OpenAI Competition Platform
-# Includes Node Express API, Python Webmail OTP Microservice, and Managed PostgreSQL.
+# Staging Blueprint for CCG × OpenAI Competition Platform
+#
+# STAGING CONFIGURATION — OTP microservice intentionally excluded.
+# The Python Webmail OTP service (otp_server.py) is preserved in the repository.
+# To re-enable it for production:
+#   1. Uncomment the "ccg-webmail-otp-service" service block below.
+#   2. Uncomment the OTP_SERVICE_URL fromService reference in ccg-case-backend.
+#   3. Set SMTP_USER and SMTP_PASS in the OTP service environment on Render.
+#   4. Change OTP_ENABLED from "false" to "true" in ccg-case-backend.
+#   5. Redeploy both services.
 
 databases:
   - name: ccg-postgres
     databaseName: ccg_competition
     user: ccg_admin
-    plan: 0.1c-256mb
-    diskSizeGB: 5
+    plan: free
+    diskSizeGB: 1
     ipAllowList: []
 
 services:
@@ -15,7 +23,7 @@ services:
   - type: web
     name: ccg-case-backend
     env: node
-    plan: standard
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
@@ -24,6 +32,8 @@ services:
         value: production
       - key: PORT
         value: 3001
+      # Set CLIENT_ORIGIN to your Vercel frontend URL after first deploy.
+      # Example: https://your-project.vercel.app
       - key: CLIENT_ORIGIN
         sync: false
       - key: FRONTEND_URL
@@ -32,18 +42,31 @@ services:
         fromDatabase:
           name: ccg-postgres
           property: connectionString
+      # ── OTP Configuration ─────────────────────────────────────────────────
+      # OTP_ENABLED=false disables participant login endpoints (returns HTTP 503)
+      # and shows a staging notice on the login page.
+      # OTP_SERVICE_URL is unused while OTP_ENABLED=false; kept for reference.
+      - key: OTP_ENABLED
+        value: "false"
       - key: OTP_SERVICE_URL
-        fromService:
-          name: ccg-webmail-otp-service
-          type: web
-          property: host
+        value: "http://localhost:5001"
+      # ── When re-enabling the OTP service, replace the static value above with:
+      # - key: OTP_SERVICE_URL
+      #   fromService:
+      #     name: ccg-webmail-otp-service
+      #     type: web
+      #     property: host
       - key: OTP_SERVICE_SHARED_SECRET
         generateValue: true
+      # ── Admin & Security ──────────────────────────────────────────────────
+      # REQUIRED: Set a strong, unique passkey in the Render dashboard.
+      # Do NOT leave this as the default placeholder.
       - key: ORGANIZER_SECRET_KEY
         sync: false
       - key: DATA_DIR
         value: /data
-      # AI Judge Configuration
+      # ── AI Judge Configuration ────────────────────────────────────────────
+      # AI judge disabled in staging; enable only after OTP auth is live.
       - key: AI_JUDGE_ENABLED
         value: "false"
       - key: AI_PROVIDER
@@ -54,7 +77,8 @@ services:
         sync: false
       - key: FEATHERLESS_API_KEY
         sync: false
-      # Object Storage Configuration (S3 / Cloudflare R2)
+      # ── Object Storage (S3 / Cloudflare R2) ──────────────────────────────
+      # When omitted, uploaded decks are stored on the persistent disk below.
       - key: S3_BUCKET
         sync: false
       - key: S3_REGION
@@ -68,35 +92,48 @@ services:
     disk:
       name: ccg-storage-disk
       mountPath: /data
-      sizeGB: 10
+      sizeGB: 1
 
   # 2. Python Webmail OTP Authentication Microservice
-  - type: web
-    name: ccg-webmail-otp-service
-    env: python
-    plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn otp_server:app --bind 0.0.0.0:$PORT
-    healthCheckPath: /api/health
-    envVars:
-      - key: PORT
-        value: 5001
-      - key: FLASK_SECRET
-        generateValue: true
-      - key: DEV_BYPASS_OTP
-        value: "false"
-      - key: SMTP_HOST
-        value: "smtp-auth.iitb.ac.in"
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: OTP_EXPIRY_SEC
-        value: "600"
-      - key: OTP_SERVICE_SHARED_SECRET
-        fromService:
-          name: ccg-case-backend
-          type: web
-          envVarKey: OTP_SERVICE_SHARED_SECRET
+  # ── COMMENTED OUT FOR STAGING ─────────────────────────────────────────────
+  # Uncomment this entire block when you are ready to enable OTP login.
+  # Requires SMTP credentials (SMTP_USER, SMTP_PASS) set in the Render dashboard.
+  #
+  # - type: web
+  #   name: ccg-webmail-otp-service
+  #   env: python
+  #   plan: free
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: gunicorn otp_server:app --bind 0.0.0.0:$PORT
+  #   healthCheckPath: /api/health
+  #   envVars:
+  #     - key: PORT
+  #       value: 5001
+  #     - key: FLASK_SECRET
+  #       generateValue: true
+  #     - key: DEV_BYPASS_OTP
+  #       value: "false"
+  #     - key: SMTP_HOST
+  #       value: "smtp-auth.iitb.ac.in"
+  #     - key: SMTP_PORT
+  #       value: "587"
+  #     - key: SMTP_USER
+  #       sync: false
+  #     - key: SMTP_PASS
+  #       sync: false
+  #     - key: OTP_EXPIRY_SEC
+  #       value: "600"
+  #     - key: OTP_SERVICE_SHARED_SECRET
+  #       fromService:
+  #         name: ccg-case-backend
+  #         type: web
+  #         envVarKey: OTP_SERVICE_SHARED_SECRET
+
+# ── Vercel Frontend Configuration ─────────────────────────────────────────────
+# The frontend is deployed separately on Vercel. Set these Vercel environment
+# variables in the Vercel dashboard under Project → Settings → Environment Variables:
+#
+#   VITE_API_URL = https://ccg-case-backend.onrender.com
+#
+# Replace the URL above with the actual service URL shown in your Render dashboard
+# after the first deploy. Leave it empty for local development (Vite proxy is used).

@@ -6,7 +6,8 @@ import { LeaderboardEntry } from '../types';
 export const leaderboardRouter = Router();
 
 // GET /api/leaderboard - Public leaderboard
-// Never exposes private deck file URLs or unpublished entries.
+// Never exposes private deck file URLs, unpublished entries, mock scores,
+// or evaluations that are still pending/failed.
 leaderboardRouter.get('/', async (_req: Request, res: Response) => {
   try {
     const rows = await db.query(`
@@ -28,7 +29,10 @@ leaderboardRouter.get('/', async (_req: Request, res: Response) => {
       FROM submissions s
       JOIN users u ON s.user_id = u.id
       JOIN evaluations e ON s.id = e.submission_id
-      WHERE s.review_status != 'rejected' AND s.is_published = 1
+      WHERE s.review_status != 'rejected'
+        AND s.is_published = 1
+        AND e.is_mock = 0
+        AND e.evaluation_status NOT IN ('mock_evaluated', 'pending', 'failed', 'placeholder')
       ORDER BY 
         e.overall_score DESC,           -- 1. Primary score
         s.created_at ASC,               -- 2. Stable tie breaker: earlier submission ranks higher
@@ -62,7 +66,7 @@ leaderboardRouter.get('/', async (_req: Request, res: Response) => {
     return res.status(200).json({
       evaluationMode: hasRealEvaluations
         ? 'Production AI Evaluation Active'
-        : 'Mock scoring — AI judge not enabled',
+        : 'Results not yet available — AI evaluation has not run',
       isAiJudgeEnabled,
       totalSubmissions: entries.length,
       entries,

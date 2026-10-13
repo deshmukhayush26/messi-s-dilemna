@@ -13,8 +13,35 @@ function getClientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || '127.0.0.1';
 }
 
+/**
+ * Returns true when institutional webmail OTP login is enabled.
+ * Set OTP_ENABLED=false to put participant authentication into maintenance mode.
+ * Admin login is NOT affected by this flag.
+ */
+function isOtpEnabled(): boolean {
+  // Default to enabled; only the explicit string "false" disables it
+  return process.env.OTP_ENABLED !== 'false';
+}
+
+const OTP_DISABLED_RESPONSE = {
+  error: 'Institutional OTP login is temporarily unavailable. This website is in staging mode.',
+  staging: true,
+};
+
+// GET /api/auth/status: Return OTP availability for frontend feature flag
+// Checked by LoginScreen on mount to show the staging notice.
+authRouter.get('/status', (_req: Request, res: Response) => {
+  res.status(200).json({
+    otpEnabled: isOtpEnabled(),
+    staging: !isOtpEnabled(),
+  });
+});
+
 // POST /api/auth/send-otp: Initiate login & send Webmail OTP
 authRouter.post('/send-otp', async (req: Request, res: Response) => {
+  if (!isOtpEnabled()) {
+    return res.status(503).json(OTP_DISABLED_RESPONSE);
+  }
   try {
     const { name, rollNumber, student_id } = req.body;
     const targetRoll = rollNumber || student_id;
@@ -33,6 +60,9 @@ authRouter.post('/send-otp', async (req: Request, res: Response) => {
 
 // Legacy / Convenience alias: POST /api/auth/login -> maps to send-otp
 authRouter.post('/login', async (req: Request, res: Response) => {
+  if (!isOtpEnabled()) {
+    return res.status(503).json(OTP_DISABLED_RESPONSE);
+  }
   try {
     const { name, rollNumber, student_id } = req.body;
     const targetRoll = rollNumber || student_id;
@@ -54,6 +84,9 @@ authRouter.post('/login', async (req: Request, res: Response) => {
 
 // POST /api/auth/verify-otp: Verify 6-digit OTP code against signed challenge token
 authRouter.post('/verify-otp', async (req: Request, res: Response) => {
+  if (!isOtpEnabled()) {
+    return res.status(503).json(OTP_DISABLED_RESPONSE);
+  }
   try {
     const { otp, otp_input, otpToken, otp_token, sessionId, name } = req.body;
     const code = otp || otp_input;
@@ -84,6 +117,9 @@ authRouter.post('/verify-otp', async (req: Request, res: Response) => {
 
 // POST /api/auth/resend-otp: Resend OTP code to student webmail
 authRouter.post('/resend-otp', async (req: Request, res: Response) => {
+  if (!isOtpEnabled()) {
+    return res.status(503).json(OTP_DISABLED_RESPONSE);
+  }
   try {
     const { rollNumber, student_id } = req.body;
     const targetRoll = rollNumber || student_id;
@@ -101,6 +137,8 @@ authRouter.post('/resend-otp', async (req: Request, res: Response) => {
 });
 
 // POST /api/auth/admin-login: Dedicated organizer passkey authorization
+// NOTE: admin-login is intentionally NOT gated by OTP_ENABLED — organizer access
+// uses a passkey, not webmail OTP, and must remain available during staging.
 authRouter.post('/admin-login', async (req: Request, res: Response) => {
   try {
     const { passkey } = req.body;
