@@ -1,0 +1,101 @@
+# render.yaml
+# Production Blueprint for CCG × OpenAI Competition Platform
+# Includes Node Express API, Python Webmail OTP Microservice, and Managed PostgreSQL.
+
+databases:
+  - name: ccg-postgres
+    databaseName: ccg_competition
+    user: ccg_admin
+    plan: standard
+    ipAllowList: [] # internal only
+
+services:
+  # 1. Express API Backend Service
+  - type: web
+    name: ccg-case-backend
+    env: node
+    plan: standard
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ccg-postgres
+          property: connectionString
+      - key: OTP_SERVICE_URL
+        fromService:
+          name: ccg-webmail-otp-service
+          type: web
+          property: host
+      - key: OTP_SERVICE_SHARED_SECRET
+        generateValue: true
+      - key: ORGANIZER_SECRET_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      # AI Judge Configuration
+      - key: AI_JUDGE_ENABLED
+        value: "false"
+      - key: AI_PROVIDER
+        value: openai
+      - key: AI_JUDGE_BUDGET_USD
+        value: "50.0"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FEATHERLESS_API_KEY
+        sync: false
+      # Object Storage Configuration (S3 / Cloudflare R2)
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ENDPOINT
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+    disk:
+      name: ccg-storage-disk
+      mountPath: /data
+      sizeGB: 10
+
+  # 2. Python Webmail OTP Authentication Microservice
+  - type: web
+    name: ccg-webmail-otp-service
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn otp_server:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 5001
+      - key: FLASK_SECRET
+        generateValue: true
+      - key: DEV_BYPASS_OTP
+        value: "false"
+      - key: SMTP_HOST
+        value: "smtp-auth.iitb.ac.in"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: OTP_EXPIRY_SEC
+        value: "600"
+      - key: OTP_SERVICE_SHARED_SECRET
+        fromService:
+          name: ccg-case-backend
+          type: web
+          envVarKey: OTP_SERVICE_SHARED_SECRET
