@@ -68,16 +68,38 @@ app.use(
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// URL normalization middleware: seamlessly handles double /api/api prefixes
+// and routes with or without /api for complete client compatibility
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/api/')) {
+    req.url = req.url.replace(/^\/api\/api\//, '/api/');
+  } else if (req.url === '/api/api') {
+    req.url = '/api';
+  }
+  next();
+});
+
 // Serve static assets from public/ folder
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Mount API routes
+// Mount API routes (under both /api and direct fallbacks for maximum resilience)
 app.use('/api/auth', authRouter);
+app.use('/auth', authRouter);
+
 app.use('/api/submissions', submissionRouter);
+app.use('/submissions', submissionRouter);
+
 app.use('/api/evaluations', evaluationRouter);
+app.use('/evaluations', evaluationRouter);
+
 app.use('/api/leaderboard', leaderboardRouter);
+app.use('/leaderboard', leaderboardRouter);
+
 app.use('/api/admin', adminRouter);
+app.use('/admin', adminRouter);
+
 app.use('/api/timer', timerRouter);
+app.use('/timer', timerRouter);
 
 // Health check endpoint for Render / monitoring (available at /health and /api/health)
 const handleHealth = async (_req: express.Request, res: express.Response) => {

@@ -14,7 +14,7 @@ export const Header: React.FC<HeaderProps> = ({ showStopwatch = false }) => {
 
     const fetchTimer = async () => {
       try {
-        const data = await apiClient.get('/timer');
+        const data = await apiClient.get('/api/timer');
         if (mounted && data) {
           setTimerStatus(data.status);
           setRemainingSec(data.remainingSeconds || 0);

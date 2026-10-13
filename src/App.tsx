@@ -77,7 +77,7 @@ const AppContent: React.FC = () => {
   const handleLogout = async () => {
     if (authToken) {
       try {
-        await apiClient.post('/auth/logout');
+        await apiClient.post('/api/auth/logout');
       } catch {
         // Ignore logout network errors
       }

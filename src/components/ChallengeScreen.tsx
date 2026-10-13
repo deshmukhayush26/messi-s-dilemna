@@ -59,7 +59,7 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
   // Sync Timer from Backend
   const syncTimer = useCallback(async () => {
     try {
-      const data = await apiClient.get('/timer');
+      const data = await apiClient.get('/api/timer');
       if (data) {
         setTimerStatus(data.status);
         setRemainingSeconds(data.remainingSeconds || 0);
@@ -73,7 +73,7 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
 
   useEffect(() => {
     let ignore = false;
-    apiClient.get('/timer')
+    apiClient.get('/api/timer')
       .then((data) => {
         if (!ignore && data) {
           setTimerStatus(data.status);
@@ -85,7 +85,7 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
       .catch(() => {});
 
     if (authToken) {
-      apiClient.get('/submissions/my')
+      apiClient.get('/api/submissions/my')
         .then((data) => {
           if (!ignore && data?.submission) {
             setMySubmission(data.submission);
@@ -119,7 +119,7 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
     setFeedbackError(null);
     setFeedbackData(null);
     try {
-      const data = await apiClient.get(`/submissions/${subId}/feedback`);
+      const data = await apiClient.get(`/api/submissions/${subId}/feedback`);
       setFeedbackData(data);
     } catch (err: any) {
       setFeedbackError(err.message || 'Error fetching evaluation feedback');
@@ -154,10 +154,10 @@ export const ChallengeScreen: React.FC<ChallengeScreenProps> = ({
         formData.append('notes', notes.trim());
         formData.append('deckFile', selectedFile);
 
-        data = await apiClient.upload('/submissions', formData);
+        data = await apiClient.upload('/api/submissions', formData);
       } else {
         // Fallback JSON payload
-        data = await apiClient.post('/submissions', {
+        data = await apiClient.post('/api/submissions', {
           teamName: teamName.trim(),
           submissionName: submissionName.trim(),
           deckFileName: fileName.trim(),

@@ -1,3 +1,5 @@
+process.env.NODE_ENV = 'test';
+
 import {
   initDb,
   db,
@@ -16,6 +18,9 @@ import { FeatherlessProvider } from '../server/services/aiJudge/providers/feathe
 import { activeEvaluationAuditService } from '../server/services/aiJudge/evaluationAuditService';
 import { PDFDocument } from 'pdf-lib';
 import JSZip from 'jszip';
+import { app } from '../server/index';
+import { apiClient } from '../src/api/client';
+import http from 'node:http';
 
 // Helper to create valid in-memory PDF with exact page count
 async function createTestPdf(pageCount: number): Promise<Buffer> {
@@ -447,15 +452,138 @@ async function runFullTestSuite() {
   assert(fatalErrorCaught, 'Production environment strictly throws fatal error without DATABASE_URL');
 
   // ---------------------------------------------------------------------------
+  // SECTION 8: Production HTTP Routing & URL Normalization Suite
+  // ---------------------------------------------------------------------------
+  console.log('\n👉 [8] Production HTTP Routing & URL Normalization Suite');
+
+  // Test 8.1: Client URL Normalization prevents duplicate /api/api
+  const savedViteUrl = process.env.VITE_API_URL;
+  try {
+    process.env.VITE_API_URL = 'https://ccg-case-backend.onrender.com/api';
+    const timerUrlWithTrailingApi = apiClient.buildUrl('/timer');
+    assert(
+      timerUrlWithTrailingApi === 'https://ccg-case-backend.onrender.com/api/timer',
+      'apiClient.buildUrl strips trailing /api from VITE_API_URL and produces single /api/timer'
+    );
+    const regUrlWithTrailingApi = apiClient.buildUrl('/auth/register');
+    assert(
+      regUrlWithTrailingApi === 'https://ccg-case-backend.onrender.com/api/auth/register',
+      'apiClient.buildUrl normalizes /auth/register to /api/auth/register without /api/api'
+    );
+    const apiPrefixedEndpoint = apiClient.buildUrl('/api/auth/register');
+    assert(
+      apiPrefixedEndpoint === 'https://ccg-case-backend.onrender.com/api/auth/register',
+      'apiClient.buildUrl normalizes already-prefixed /api/auth/register without /api/api'
+    );
+    const doubleApiPrefixedEndpoint = apiClient.buildUrl('/api/api/timer');
+    assert(
+      doubleApiPrefixedEndpoint === 'https://ccg-case-backend.onrender.com/api/timer',
+      'apiClient.buildUrl cleans duplicate /api/api prefixes'
+    );
+
+    // Empty VITE_API_URL fallback (Vercel proxy rewrites)
+    process.env.VITE_API_URL = '';
+    assert(
+      apiClient.buildUrl('/timer') === '/api/timer',
+      'apiClient.buildUrl produces relative /api/timer when VITE_API_URL is empty'
+    );
+    assert(
+      apiClient.buildUrl('/auth/register') === '/api/auth/register',
+      'apiClient.buildUrl produces relative /api/auth/register when VITE_API_URL is empty'
+    );
+  } finally {
+    if (savedViteUrl !== undefined) {
+      process.env.VITE_API_URL = savedViteUrl;
+    } else {
+      delete process.env.VITE_API_URL;
+    }
+  }
+
+  // Test 8.2: Live Express HTTP Server Route Resolution
+  const httpServer = http.createServer(app);
+  await new Promise<void>((resolve) => httpServer.listen(0, resolve));
+  const serverPort = (httpServer.address() as any).port;
+  const testHost = `http://127.0.0.1:${serverPort}`;
+
+  try {
+    // 8.2.1: GET /api/timer returns 200 OK
+    const resTimerApi = await fetch(`${testHost}/api/timer`);
+    const timerApiJson = await resTimerApi.json();
+    assert(resTimerApi.status === 200 && timerApiJson.status !== undefined, 'Express responds 200 to GET /api/timer');
+
+    // 8.2.2: GET /timer returns 200 OK (Convenience direct alias)
+    const resTimerRoot = await fetch(`${testHost}/timer`);
+    const timerRootJson = await resTimerRoot.json();
+    assert(resTimerRoot.status === 200 && timerRootJson.status !== undefined, 'Express responds 200 to GET /timer alias');
+
+    // 8.2.3: GET /api/api/timer returns 200 OK (Legacy bundle middleware normalization)
+    const resTimerDoubleApi = await fetch(`${testHost}/api/api/timer`);
+    const timerDoubleJson = await resTimerDoubleApi.json();
+    assert(resTimerDoubleApi.status === 200 && timerDoubleJson.status !== undefined, 'Express middleware normalizes GET /api/api/timer to 200 OK');
+
+    // 8.2.4: POST /api/auth/register provisions participant account
+    const testRegPayload = {
+      name: 'Integration Tester',
+      rollNumber: '24B9001',
+      password: 'SafePassword123!',
+      email: 'tester9001@iitb.ac.in',
+    };
+    await db.execute("DELETE FROM users WHERE UPPER(roll_number) = '24B9001'");
+    const resRegApi = await fetch(`${testHost}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testRegPayload),
+    });
+    const regApiJson = await resRegApi.json();
+    assert(resRegApi.status === 201 && regApiJson.token && regApiJson.user?.rollNumber === '24B9001', 'Express responds 201 Created to POST /api/auth/register');
+
+    // 8.2.5: POST /auth/register provisions participant account (Convenience alias)
+    await db.execute("DELETE FROM users WHERE UPPER(roll_number) = '24B9002'");
+    const resRegRoot = await fetch(`${testHost}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...testRegPayload, rollNumber: '24B9002' }),
+    });
+    const regRootJson = await resRegRoot.json();
+    assert(resRegRoot.status === 201 && regRootJson.token, 'Express responds 201 Created to POST /auth/register alias');
+
+    // 8.2.6: POST /api/api/auth/register provisions participant account (Legacy normalization)
+    await db.execute("DELETE FROM users WHERE UPPER(roll_number) = '24B9003'");
+    const resRegDouble = await fetch(`${testHost}/api/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...testRegPayload, rollNumber: '24B9003' }),
+    });
+    const regDoubleJson = await resRegDouble.json();
+    assert(resRegDouble.status === 201 && regDoubleJson.token, 'Express middleware normalizes POST /api/api/auth/register to 201 Created');
+
+    // 8.2.7: POST /api/auth/login authenticates participant
+    const resLogin = await fetch(`${testHost}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rollNumber: '24B9001', password: 'SafePassword123!' }),
+    });
+    const loginJson = await resLogin.json();
+    assert(resLogin.status === 200 && loginJson.token && loginJson.user?.role === 'participant', 'Express responds 200 to POST /api/auth/login');
+  } finally {
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  }
+
+  // ---------------------------------------------------------------------------
   // SUMMARY
   // ---------------------------------------------------------------------------
   console.log('\n================================================================');
   console.log(`TEST SUITE RESULTS: ${passed} Passed, ${failed} Failed`);
   console.log('================================================================\n');
 
+  try {
+    await db.close();
+  } catch {}
+
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runFullTestSuite().catch((err) => {

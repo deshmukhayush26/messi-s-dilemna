@@ -34,7 +34,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onDirectLogin }) => {
 
     setLoading(true);
     try {
-      const data = await apiClient.post('/auth/login', {
+      const data = await apiClient.post('/api/auth/login', {
         rollNumber: cleanRoll,
         password,
       });
@@ -71,7 +71,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onDirectLogin }) => {
 
     setLoading(true);
     try {
-      const data = await apiClient.post('/auth/register', {
+      const data = await apiClient.post('/api/auth/register', {
         name: cleanName,
         rollNumber: cleanRoll,
         password,

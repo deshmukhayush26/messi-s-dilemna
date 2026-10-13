@@ -19,7 +19,7 @@ export const LeaderboardScreen: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiClient.get('/leaderboard');
+      const data = await apiClient.get('/api/leaderboard');
       setEntries(data.entries || []);
       if (data.evaluationMode) {
         setEvaluationMode(data.evaluationMode);
@@ -33,7 +33,7 @@ export const LeaderboardScreen: React.FC = () => {
 
   useEffect(() => {
     let ignore = false;
-    apiClient.get('/leaderboard')
+    apiClient.get('/api/leaderboard')
       .then((data) => {
         if (!ignore) {
           setEntries(data.entries || []);

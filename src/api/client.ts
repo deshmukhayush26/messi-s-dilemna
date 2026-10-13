@@ -35,12 +35,16 @@ export interface RequestOptions extends RequestInit {
   skipAuth?: boolean;
 }
 
-const getApiBaseUrl = (): string => {
-  const envUrl = (import.meta as any).env?.VITE_API_URL;
+export const getApiBaseUrl = (): string => {
+  const envUrl =
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) ||
+    (typeof globalThis !== 'undefined' && (globalThis as any).process?.env?.VITE_API_URL);
   if (envUrl && typeof envUrl === 'string' && envUrl.trim().length > 0) {
-    return envUrl.replace(/\/+$/, '');
+    // Strip trailing slashes and any trailing /api suffix
+    // so base is the host origin without a trailing /api (e.g. 'https://ccg-case-backend.onrender.com')
+    return envUrl.trim().replace(/\/+$/, '').replace(/\/api$/, '');
   }
-  // When empty, relative URLs /api/... route through Vite dev proxy or same-domain deployment
+  // When empty, relative URLs /api/... route through Vite dev proxy or Vercel rewrites
   return '';
 };
 
@@ -57,11 +61,14 @@ class ApiClient {
     return this.buildUrl(endpoint);
   }
 
-  private buildUrl(endpoint: string): string {
+  buildUrl(endpoint: string): string {
     const base = getApiBaseUrl();
-    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    // Ensure /api namespace
-    const finalPath = cleanEndpoint.startsWith('/api') ? cleanEndpoint : `/api${cleanEndpoint}`;
+    // Normalize endpoint to start with /
+    let clean = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    // Strip duplicate /api/api if present
+    clean = clean.replace(/^\/api\/api(\/|$)/, '/api$1');
+    // Ensure single /api prefix
+    const finalPath = clean.startsWith('/api') ? clean : `/api${clean}`;
     return `${base}${finalPath}`;
   }
 
