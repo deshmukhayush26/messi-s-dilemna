@@ -8,25 +8,53 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+import os from 'node:os';
+
 const isProduction = process.env.NODE_ENV === 'production';
 const databaseUrl = process.env.DATABASE_URL;
 
+export function assertProductionDatabaseUrlConfigured(isProd: boolean, url?: string): void {
+  if (isProd && !url) {
+    const fatalMessage = 'FATAL: DATABASE_URL is required in production environment. Application will not silently fall back to SQLite.';
+    console.error(`❌ ${fatalMessage}`);
+    throw new Error(fatalMessage);
+  }
+}
+
 // Enforce PostgreSQL in production
-if (isProduction && !databaseUrl) {
-  const fatalMessage = 'FATAL: DATABASE_URL is required in production environment. Application will not silently fall back to SQLite.';
-  console.error(`❌ ${fatalMessage}`);
-  throw new Error(fatalMessage);
-}
+assertProductionDatabaseUrlConfigured(isProduction, databaseUrl);
 
-const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
+/**
+ * Resolves a writable local directory for SQLite during local development or testing.
+ * Never called when DATABASE_URL is configured (production PostgreSQL mode).
+ */
+export function getWritableSqliteDir(): string {
+  const candidates: string[] = [];
+  if (process.env.DATA_DIR) {
+    candidates.push(process.env.DATA_DIR);
+  }
+  candidates.push(path.join(__dirname, '..', 'data'));
+  candidates.push(path.join(os.tmpdir(), 'ccg-competition-data'));
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(dataDir, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) {
+        fs.mkdirSync(candidate, { recursive: true });
+      }
+      fs.accessSync(candidate, fs.constants.W_OK);
+      return candidate;
+    } catch {
+      // Continue to next candidate if directory cannot be created or is not writable
+    }
+  }
+
+  const fallback = path.join(os.tmpdir(), 'ccg-competition-data');
+  try {
+    if (!fs.existsSync(fallback)) {
+      fs.mkdirSync(fallback, { recursive: true });
+    }
+  } catch {}
+  return fallback;
 }
 
 export interface DatabaseAdapter {
@@ -82,7 +110,7 @@ export function translateSqlForPostgres(sql: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // PostgreSQL Adapter Implementation
 // ─────────────────────────────────────────────────────────────────────────────
-class PostgresDatabaseAdapter implements DatabaseAdapter {
+export class PostgresDatabaseAdapter implements DatabaseAdapter {
   readonly isPostgres = true;
   private pool: pg.Pool;
 
@@ -209,7 +237,7 @@ class PostgresDatabaseAdapter implements DatabaseAdapter {
 // ─────────────────────────────────────────────────────────────────────────────
 // SQLite Adapter Implementation (Development / Test Isolated Only)
 // ─────────────────────────────────────────────────────────────────────────────
-class SqliteDatabaseAdapter implements DatabaseAdapter {
+export class SqliteDatabaseAdapter implements DatabaseAdapter {
   readonly isPostgres = false;
   private sqlite: DatabaseSync;
 
@@ -290,11 +318,19 @@ class SqliteDatabaseAdapter implements DatabaseAdapter {
 // ─────────────────────────────────────────────────────────────────────────────
 // Singleton Database Adapter Export
 // ─────────────────────────────────────────────────────────────────────────────
-const dbPath = path.join(dataDir, 'app.db');
+export function createDatabaseAdapter(connUrl?: string): DatabaseAdapter {
+  if (connUrl) {
+    // Production / PostgreSQL mode: connects directly to PostgreSQL without creating
+    // any local data directory, SQLite database file, or uploads folder.
+    return new PostgresDatabaseAdapter(connUrl);
+  }
+  // Local development / testing mode with SQLite
+  const sqliteDataDir = getWritableSqliteDir();
+  const dbPath = path.join(sqliteDataDir, 'app.db');
+  return new SqliteDatabaseAdapter(dbPath);
+}
 
-export const db: DatabaseAdapter = databaseUrl
-  ? new PostgresDatabaseAdapter(databaseUrl)
-  : new SqliteDatabaseAdapter(dbPath);
+export const db: DatabaseAdapter = createDatabaseAdapter(databaseUrl);
 
 export async function checkDbHealthAsync() {
   return db.checkHealth();
@@ -312,27 +348,31 @@ export function checkDbHealth() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Schema Initialization & Migration Verification
 // ─────────────────────────────────────────────────────────────────────────────
-export async function initDb(): Promise<void> {
-  if (db.isPostgres) {
+export async function initDb(targetDb: DatabaseAdapter = db): Promise<void> {
+  if (targetDb.isPostgres) {
     // 1. Verify schema on PostgreSQL
-    const health = await db.checkHealth();
+    const health = await targetDb.checkHealth();
     if (!health.ready) {
       const schemaPath = path.join(__dirname, '..', 'migrations', '001_initial_schema.sql');
       if (fs.existsSync(schemaPath)) {
         console.log('📦 Applying PostgreSQL schema from migrations/001_initial_schema.sql...');
         const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-        await db.executeScript(schemaSql);
+        await targetDb.executeScript(schemaSql);
         console.log('✅ Schema migration applied successfully.');
+        const postHealth = await targetDb.checkHealth();
+        if (!postHealth.ready) {
+          throw new Error(`FATAL: PostgreSQL schema migration applied, but only ${postHealth.tables} of 9 required tables were found.`);
+        }
       } else {
         throw new Error('FATAL: migrations/001_initial_schema.sql not found. Cannot initialise PostgreSQL schema.');
       }
     }
 
     // 2. Ensure default admin_config row exists
-    const configRow = await db.queryOne('SELECT id FROM admin_config WHERE id = ?', ['global']);
+    const configRow = await targetDb.queryOne('SELECT id FROM admin_config WHERE id = ?', ['global']);
     if (!configRow) {
       const nowIso = new Date().toISOString();
-      await db.execute(`
+      await targetDb.execute(`
         INSERT INTO admin_config (
           id, app_token_budget, is_ai_judge_enabled, leaderboard_visibility, enforce_min_slides,
           ai_judge_provider, ai_judge_model, ai_judge_rubric_version, ai_judge_max_concurrency,
@@ -353,10 +393,10 @@ export async function initDb(): Promise<void> {
     }
 
     // 3. Ensure default event_timer row exists
-    const timerRow = await db.queryOne('SELECT id FROM event_timer WHERE id = ?', ['global']);
+    const timerRow = await targetDb.queryOne('SELECT id FROM event_timer WHERE id = ?', ['global']);
     if (!timerRow) {
       const nowIso = new Date().toISOString();
-      await db.execute(`
+      await targetDb.execute(`
         INSERT INTO event_timer (
           id, status, initial_duration_sec, remaining_duration_sec,
           start_timestamp, end_timestamp, last_updated_at, last_updated_by, version
@@ -368,10 +408,10 @@ export async function initDb(): Promise<void> {
     }
 
     // 4. Ensure default organizer user exists
-    const organizerUser = await db.queryOne('SELECT id FROM users WHERE roll_number = ?', ['ORGANIZER_ADMIN']);
+    const organizerUser = await targetDb.queryOne('SELECT id FROM users WHERE roll_number = ?', ['ORGANIZER_ADMIN']);
     if (!organizerUser) {
       const nowIso = new Date().toISOString();
-      await db.execute(`
+      await targetDb.execute(`
         INSERT INTO users (id, name, roll_number, role, created_at)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (id) DO NOTHING
@@ -383,7 +423,7 @@ export async function initDb(): Promise<void> {
   }
 
   // SQLite Initialization (for local development only)
-  await db.execute(`
+  await targetDb.execute(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -538,9 +578,9 @@ export async function initDb(): Promise<void> {
   `);
 
   // Ensure default admin config in SQLite
-  const configRow = await db.queryOne('SELECT id FROM admin_config WHERE id = ?', ['global']);
+  const configRow = await targetDb.queryOne('SELECT id FROM admin_config WHERE id = ?', ['global']);
   if (!configRow) {
-    await db.execute(`
+    await targetDb.execute(`
       INSERT INTO admin_config (
         id, app_token_budget, is_ai_judge_enabled, leaderboard_visibility, enforce_min_slides,
         ai_judge_provider, ai_judge_model, ai_judge_rubric_version, ai_judge_max_concurrency,
@@ -557,10 +597,10 @@ export async function initDb(): Promise<void> {
   }
 
   // Ensure default timer row in SQLite
-  const timerRow = await db.queryOne('SELECT id FROM event_timer WHERE id = ?', ['global']);
+  const timerRow = await targetDb.queryOne('SELECT id FROM event_timer WHERE id = ?', ['global']);
   if (!timerRow) {
     const nowIso = new Date().toISOString();
-    await db.execute(`
+    await targetDb.execute(`
       INSERT INTO event_timer (
         id, status, initial_duration_sec, remaining_duration_sec,
         start_timestamp, end_timestamp, last_updated_at, last_updated_by, version
@@ -570,22 +610,22 @@ export async function initDb(): Promise<void> {
   }
 
   // Ensure organizer user exists in SQLite
-  const organizerUser = await db.queryOne('SELECT id FROM users WHERE roll_number = ?', ['ORGANIZER_ADMIN']);
+  const organizerUser = await targetDb.queryOne('SELECT id FROM users WHERE roll_number = ?', ['ORGANIZER_ADMIN']);
   if (!organizerUser) {
-    await db.execute(`
+    await targetDb.execute(`
       INSERT INTO users (id, name, roll_number, role, created_at)
       VALUES (?, ?, ?, ?, ?)
     `, ['usr_organizer_root', 'Lead Case Coordinator', 'ORGANIZER_ADMIN', 'organizer', new Date().toISOString()]);
   }
 
   // Check if we need initial seed submissions for a great first-load experience (dev only)
-  const subCountRow = await db.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM submissions');
+  const subCountRow = await targetDb.queryOne<{ count: number }>('SELECT COUNT(*) as count FROM submissions');
   if (subCountRow && subCountRow.count === 0 && !isProduction && process.env.ENABLE_DEV_SEEDS === 'true') {
-    await seedInitialDemoSubmissions();
+    await seedInitialDemoSubmissions(targetDb);
   }
 }
 
-async function seedInitialDemoSubmissions() {
+async function seedInitialDemoSubmissions(targetDb: DatabaseAdapter = db) {
   const seedUsers = [
     { id: 'usr_seed_1', name: 'Aarav Sharma', roll: '22b0101' },
     { id: 'usr_seed_2', name: 'Ananya Iyer', roll: '22b0204' },
@@ -620,7 +660,7 @@ async function seedInitialDemoSubmissions() {
       'Horizon Advisory'
     ];
 
-    await db.execute(`
+    await targetDb.execute(`
       INSERT INTO submissions (
         id, user_id, team_name, submission_name, deck_file_name, deck_file_url,
         storage_key, file_type, file_size, slide_count, submission_duration_sec,
@@ -641,7 +681,7 @@ async function seedInitialDemoSubmissions() {
       new Date(now - (idx + 1) * 3600000).toISOString()
     ]);
 
-    await db.execute(`
+    await targetDb.execute(`
       INSERT INTO evaluations (
         id, submission_id, evaluation_version, evaluation_status,
         overall_score, problem_structuring_score, analytical_rigor_score,

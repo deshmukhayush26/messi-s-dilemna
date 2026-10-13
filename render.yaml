@@ -62,8 +62,11 @@ services:
       # Do NOT leave this as the default placeholder.
       - key: ORGANIZER_SECRET_KEY
         sync: false
-      - key: DATA_DIR
-        value: /data
+      # ── Storage Configuration ─────────────────────────────────────────────
+      # NOTE: Render Free web services do not have persistent disk mounts.
+      # PostgreSQL provides persistent relational storage.
+      # Decks are stored via S3/R2 when configured, or local ephemeral container storage.
+      # DATA_DIR=/data is omitted because /data is not mounted on the Free plan.
       # ── AI Judge Configuration ────────────────────────────────────────────
       # AI judge disabled in staging; enable only after OTP auth is live.
       - key: AI_JUDGE_ENABLED

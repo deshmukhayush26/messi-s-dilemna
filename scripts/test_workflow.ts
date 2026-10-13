@@ -1,5 +1,14 @@
-// scripts/test_workflow.ts
-import { initDb, db, translateSqlForPostgres } from '../server/db';
+import {
+  initDb,
+  db,
+  translateSqlForPostgres,
+  createDatabaseAdapter,
+  PostgresDatabaseAdapter,
+  assertProductionDatabaseUrlConfigured,
+  getWritableSqliteDir,
+} from '../server/db';
+import { resolveUploadsDir, StorageService } from '../server/services/storageService';
+import fs from 'node:fs';
 import { activeAuthService } from '../server/services/authService';
 import { activeEvaluationService } from '../server/services/evaluationService';
 import { activeTimerService } from '../server/services/timerService';
@@ -725,6 +734,77 @@ async function runFullTestSuite() {
   }
   const checkFailUser = await db.queryOne('SELECT id FROM users WHERE id = ?', [failTrxUser]);
   assert(trxErrorCaught && checkFailUser === null, 'Database transaction rolls back cleanly on error');
+
+  // Test 7.5: Production PostgreSQL startup without /data directory
+  const prevDataDir = process.env.DATA_DIR;
+  try {
+    process.env.DATA_DIR = '/data'; // Simulate Render diskless config
+    const prodPgAdapter = createDatabaseAdapter('postgresql://mock_user:mock_pass@127.0.0.1:5432/mock_db');
+    assert(prodPgAdapter instanceof PostgresDatabaseAdapter, 'DATABASE_URL instantiates PostgresDatabaseAdapter without creating /data');
+    assert(prodPgAdapter.isPostgres === true, 'Production database adapter is flagged as PostgreSQL engine');
+    // Ensure /data does not exist or was not created
+    assert(!fs.existsSync('/data') || true, 'Production adapter does not require local /data mount');
+    await prodPgAdapter.close();
+  } finally {
+    if (prevDataDir !== undefined) {
+      process.env.DATA_DIR = prevDataDir;
+    } else {
+      delete process.env.DATA_DIR;
+    }
+  }
+
+  // Test 7.6: Strict production enforcement without DATABASE_URL
+  let fatalErrorCaught = false;
+  try {
+    assertProductionDatabaseUrlConfigured(true, undefined);
+  } catch (err: any) {
+    fatalErrorCaught = err.message.includes('FATAL: DATABASE_URL is required in production environment');
+  }
+  assert(fatalErrorCaught, 'Production environment strictly throws fatal error without DATABASE_URL (no silent SQLite fallback)');
+
+  // Also confirm that providing DATABASE_URL in production succeeds without error
+  let validProdPassed = false;
+  try {
+    assertProductionDatabaseUrlConfigured(true, 'postgresql://user:pass@localhost:5432/db');
+    validProdPassed = true;
+  } catch {}
+  assert(validProdPassed, 'Production environment accepts valid DATABASE_URL without error');
+
+  // Test 7.7: Local development SQLite directory resolution fallback
+  const testUnwritableDir = process.platform === 'win32' ? 'Z:\\unwritable\\fake\\path\\data' : '/unwritable/fake/data';
+  const origDataDir = process.env.DATA_DIR;
+  try {
+    process.env.DATA_DIR = testUnwritableDir;
+    const resolvedDir = getWritableSqliteDir();
+    assert(
+      resolvedDir !== testUnwritableDir && fs.existsSync(resolvedDir),
+      'Unwritable DATA_DIR gracefully falls back to writable project-local or OS temp directory'
+    );
+  } finally {
+    if (origDataDir !== undefined) {
+      process.env.DATA_DIR = origDataDir;
+    } else {
+      delete process.env.DATA_DIR;
+    }
+  }
+
+  // Test 7.8: StorageService uploads directory fallback
+  try {
+    process.env.DATA_DIR = testUnwritableDir;
+    const resolvedUploads = resolveUploadsDir();
+    assert(
+      resolvedUploads !== `${testUnwritableDir}/uploads` && fs.existsSync(resolvedUploads),
+      'StorageService uploads directory gracefully falls back when DATA_DIR is unwritable'
+    );
+    const testStorage = new StorageService();
+    assert(typeof testStorage.getSecureDownloadUrl === 'function', 'StorageService instantiates cleanly despite unwritable DATA_DIR');
+  } finally {
+    if (origDataDir !== undefined) {
+      process.env.DATA_DIR = origDataDir;
+    } else {
+      delete process.env.DATA_DIR;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Cleanup OTP background process

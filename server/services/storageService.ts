@@ -1,6 +1,7 @@
 // server/services/storageService.ts
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -11,17 +12,47 @@ export interface StoredDeck {
   contentType: string;
 }
 
+/**
+ * Resolves a writable local uploads directory.
+ * If process.env.DATA_DIR points to an unwritable directory (e.g. /data on a diskless host),
+ * safely catches the error and falls back to project-local data or the OS temp directory.
+ */
+export function resolveUploadsDir(): string {
+  const candidates: string[] = [];
+  if (process.env.DATA_DIR) {
+    candidates.push(path.join(process.env.DATA_DIR, 'uploads'));
+  }
+  candidates.push(path.join(__dirname, '..', '..', 'data', 'uploads'));
+  candidates.push(path.join(os.tmpdir(), 'ccg-competition-uploads'));
+
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) {
+        fs.mkdirSync(candidate, { recursive: true });
+      }
+      fs.accessSync(candidate, fs.constants.W_OK);
+      return candidate;
+    } catch {
+      // Continue to next candidate if directory is unwritable or cannot be created
+    }
+  }
+
+  const fallback = path.join(os.tmpdir(), 'ccg-competition-uploads');
+  try {
+    if (!fs.existsSync(fallback)) {
+      fs.mkdirSync(fallback, { recursive: true });
+    }
+  } catch {}
+  return fallback;
+}
+
 export class StorageService {
   private uploadsDir: string;
   private isS3Configured: boolean;
   private s3Bucket?: string;
 
   constructor() {
-    const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
-    this.uploadsDir = path.join(dataDir, 'uploads');
-    if (!fs.existsSync(this.uploadsDir)) {
-      fs.mkdirSync(this.uploadsDir, { recursive: true });
-    }
+    this.uploadsDir = resolveUploadsDir();
 
     this.s3Bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
     this.isS3Configured = Boolean(
@@ -89,9 +120,13 @@ export class StorageService {
     // S3 REST Upload implementation using fetch with AWS v4 auth or S3 Compatible Endpoint
     const endpoint = process.env.S3_ENDPOINT || `https://${this.s3Bucket}.s3.${process.env.S3_REGION || 'us-east-1'}.amazonaws.com`;
     console.log(`[StorageService] Uploading ${storageKey} (${buffer.length} bytes, ${contentType}) to S3 bucket ${this.s3Bucket} at ${endpoint}`);
-    // Also keep local disk copy as fallback cache
-    const filePath = path.join(this.uploadsDir, storageKey);
-    await fs.promises.writeFile(filePath, buffer);
+    // Also keep local disk copy as fallback cache if writable
+    try {
+      const filePath = path.join(this.uploadsDir, storageKey);
+      await fs.promises.writeFile(filePath, buffer);
+    } catch (err) {
+      console.warn('[StorageService] Local disk cache write skipped:', err);
+    }
     return storageKey;
   }
 }
